@@ -411,9 +411,10 @@ int main()
 		count++;
         //cout << "Double val: " << right << showpoint << d << endl;
     }
+	//Done Reading in values from files.
 
 	convolveWithCuda(sRaw, signal, hOut, 438, 160);
-	//hOut is sM after convolution to of raw data with p signal
+	//hOut is sM after convolution of raw data with p signal
 	free(signal);
 	free(sRaw);
 	cudaDeviceReset();

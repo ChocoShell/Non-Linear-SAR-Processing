@@ -5,6 +5,8 @@
 *.suo
 *.user
 *.sln.docstates
+*.csv
+*.txt
 
 # Build results
 
