@@ -73,22 +73,15 @@ plot sM in matlab
 
 #include <vector_types.h>
 
+#include <array>
+
 using namespace std;
 
-#define BLOCK_SIZE 64
+#define BLOCK_SIZE 32
 
 #define PI 3.1415926535
 
-// Old code
-typedef struct { 
-  int width; 
-  int height; 
-  cufftComplex* signal; 
-} cufftComplexMatrix;
-
 const long int spd_of_light = 299792458;
-
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
 
 void split_line(string& line, string delim, list<string>& values)
 {
@@ -104,99 +97,9 @@ void split_line(string& line, string delim, list<string>& values)
     }
 }
 
-__global__ void MV_complex_kernel(cufftComplex *matrix_signal, cufftComplex *vector_signal, const int width, const int batch)
+__global__ void flattenKernel(cuDoubleComplex *matrix_signal, cuDoubleComplex *out_signal, const int width, const int batch)
 {
-	cufftComplex ducks;
-	unsigned int r = (blockIdx.x * blockDim.x) + threadIdx.x;
-	unsigned int c = (blockIdx.y * blockDim.y) + threadIdx.y;
-	if (width > r && batch > c)
-	{
-		unsigned int ind = (c * batch) + r;
-
-		ducks.x = matrix_signal[ind].x * vector_signal[r].x - matrix_signal[ind].y * vector_signal[r].y;
-		ducks.y = matrix_signal[ind].x * vector_signal[r].y + vector_signal[r].x * matrix_signal[ind].y;
-
-		matrix_signal[ind] = ducks;
-	}
-}
-
-__global__ void addKernel(int *c, const int *a, const int *b)
-{
-    int i = threadIdx.x;
-    c[i] = a[i] + b[i];
-}
-
-__global__ void shmem_reduce_kernel(float *d_out, const float *d_in)
-{
-	// sdata is allocated in the kernel call: 3rd arg to <<<b, t, shmem>>>
-	extern __shared__ float sdata[];
-
-	unsigned int s;
-	int id = threadIdx.x + blockDim.x * blockIdx.x;
-	int tid = threadIdx.x;
-
-	// load global data into shared memory
-	sdata[tid] = d_in[id];
-
-	// make sure entire block is loaded
-	__syncthreads();  
-	
-	// Reduction in shared memory
-	for (s = blockDim.x / 2; s > 0; s >>= 1)
-	{
-		if (tid < s)
-		{
-			sdata[tid] += sdata[tid + s];
-		}
-		__syncthreads();
-	}
-
-	// only thread 0 writes result back to global mem for current block
-	if(tid == 0)
-	{
-		d_out[blockIdx.x] = sdata[0];
-	}
-}
-
-__global__ void setup_kernel(curandState *state)
-{
-    int id = threadIdx.x + blockIdx.x * blockDim.x;
-    /* Each thread gets same seed, a different sequence 
-       number, no offset */
-    curand_init(1234, id, 0, &state[id]);
-}
-
-__global__ void map_maker(curandState *states, float *out)
-{
-	int id = threadIdx.x + blockIdx.x * blockDim.x;
-	float result;
-
-	curandState localState = states[id];
-
-	result = sqrt((float) id*(BLOCK_SIZE * BLOCK_SIZE - id)) * (10 - curand_uniform(&localState)) /10;
-	
-	states[id] = localState;
-	
-	out[id] = result;
-}
-
-__global__ void generate_uniform_kernel(curandState *state, float *result, const float shift, const float normalizer)
-{
-    int id = threadIdx.x + blockIdx.x * blockDim.x;
-    float x;
-    /* Copy state to local memory for efficiency */
-    curandState localState = state[id];
-    /* Generate pseudo-random uniforms */
-    x = shift + curand_uniform(&localState) * normalizer;
-    /* Copy state back to global memory */
-    state[id] = localState;
-    /* Store results */
-    result[id] = x;
-}
-
-__global__ void flattenKernel(cufftComplex *matrix_signal, cufftComplex *out_signal, const int width, const int batch)
-{
-	cufftComplex ducks;
+	cuDoubleComplex ducks;
 	unsigned int r = (blockIdx.x * blockDim.x) + threadIdx.x;
 	if (width > r)
 	{
@@ -209,114 +112,102 @@ __global__ void flattenKernel(cufftComplex *matrix_signal, cufftComplex *out_sig
 	}
 }
 
-void map_maker_helper(curandState *states, float *hostOut)
+__global__ void conv_mat_vec_kernel(cuDoubleComplex *matrix, cuDoubleComplex *vector, cuDoubleComplex *out, const unsigned int width, const unsigned int batch)
 {
-	float *devOut;
-
-	cudaMalloc((void **)&devOut, BLOCK_SIZE * BLOCK_SIZE * sizeof(float));
-
-	cudaMemset(devOut, 0, BLOCK_SIZE * BLOCK_SIZE * sizeof(float));
-
-	cudaMalloc((void **)&states, BLOCK_SIZE * BLOCK_SIZE * sizeof(curandState));
-
-	//setup_kernel<<<BLOCK_SIZE, BLOCK_SIZE>>>(states);
-
-	map_maker<<<BLOCK_SIZE, BLOCK_SIZE>>>(states, devOut);
-
-	cudaMemcpy(hostOut, devOut, BLOCK_SIZE * BLOCK_SIZE * sizeof(float), cudaMemcpyDeviceToHost);
-
-	cudaFree(devOut);
-}
-
-void generator_uniform_wrapper(curandState *devStates, float *hostOut, const float shift, const float normalizer)
-{
-	float *devOut;
-	
-	cudaMalloc((void **)&devOut, BLOCK_SIZE * BLOCK_SIZE * sizeof(float));
-
-	cudaMemset(devOut, 0, BLOCK_SIZE * BLOCK_SIZE * sizeof(float));
-
-	cudaMalloc((void **)&devStates, BLOCK_SIZE * BLOCK_SIZE * sizeof(curandState));
-
-	setup_kernel<<<BLOCK_SIZE, BLOCK_SIZE>>>(devStates);
-
-	generate_uniform_kernel<<<BLOCK_SIZE, BLOCK_SIZE>>>(devStates, devOut, shift, normalizer );
-
-	cudaMemcpy(hostOut, devOut, BLOCK_SIZE * BLOCK_SIZE * sizeof(float), cudaMemcpyDeviceToHost);
-
-	cudaFree(devOut);
-}
-
-__global__ void conv_mat_vec_kernel(cufftComplex *matrix, cufftComplex *vector, cufftComplex *out, const unsigned int width, const unsigned int batch)
-{
-	unsigned int fid = threadIdx.x;
-	unsigned int uid = blockIdx.x;
+	int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
 	unsigned int maxLen = 2*width - 1;
-	float matX, matY, vecX, vecY;
+    float matX, matY, vecX, vecY;
 	unsigned int start, end;
+	cuDoubleComplex sum;
 	
-	cufftComplex sum;
+    if (batch -1 < row || maxLen - 1 < col) return;
+
 	sum.x = 0;
 	sum.y = 0;
 	
-	if (fid < maxLen) 
+	if (col < width)
 	{
-		if (fid < width)
-		{
-			start = width - fid - 1; // greater or equal to this
-			end   = width; // less than this
-		}
-		else
-		{
-			start = 0;
-			end = maxLen - fid; //less than this
-		}
-		matX = matrix[uid*width + 437 - start].x;
-		matY = matrix[uid*width + 437 - start].y;
-		vecX = vector[start].x;
-		vecY = vector[start].y;
-
-		for(start; start < end; start++)
-		{
-			sum.x += matX*vecX - matY*vecY;
-			sum.y += matX*vecY + matY*vecX;
-		}
-		out[uid * maxLen + fid] = sum;
+		start = 0; // greater or equal to this
+		end   = col +1; // less than this
 	}
+	else
+	{
+		start = col - width +1;
+		end   = width; //less than this
+	}
+
+    //start and end act as Tau in the convolution equation
+	for(start; start < end; start++)
+	{
+        matX = matrix[start].x;
+    	matY = matrix[start].y;
+	    vecX = vector[col-start].x;
+	    vecY = vector[col-start].y;
+        sum.x = matX*vecX - matY*vecY;
+		sum.y = matX*vecY + matY*vecX;
+	}
+	out[row*maxLen + col] = sum;	
 }
 
-void convolveWithCuda(cufftComplex *unknown_signal_block, cufftComplex *template_signal, cufftComplex *hOut, const int width, const int batch)
+void convolveWithCuda(cuDoubleComplex *unknown_signal_block, cuDoubleComplex *template_signal, cuDoubleComplex *hOut, const int width, const int batch)
 {	
-	cufftComplex *data, *temp, *out;
+	cuDoubleComplex *data, *temp, *out, curr;
+    int x,y;
+    int tots = 2*width - 1;
 
 	// FFT of return signal matrix
-	cudaMalloc((void**)&data, sizeof(cufftComplex)*width*batch);
+	cudaMalloc((void**)&data, sizeof(cuDoubleComplex)*width*batch);
 	if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Failed to allocate data\n");
 		return;
 	}
 
-	cudaMalloc((void**)&out, sizeof(cufftComplex)*(2*width - 1)*batch);
+	cudaMalloc((void**)&out, sizeof(cuDoubleComplex)*(2*width - 1)*batch);
 	if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Failed to allocate data\n");
 		return;
 	}
 
-	cudaMalloc((void**)&temp, sizeof(cufftComplex)*width);
+	cudaMalloc((void**)&temp, sizeof(cuDoubleComplex)*width);
 	if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Failed to allocate temp\n");
 		return;
 	}
 
-	cudaMemcpy(data, unknown_signal_block, sizeof(cufftComplex)*batch*width, cudaMemcpyHostToDevice);
-	cudaMemcpy(temp, template_signal, sizeof(cufftComplex)*width, cudaMemcpyHostToDevice);
+	cudaMemcpy(data, unknown_signal_block, sizeof(cuDoubleComplex)*batch*width, cudaMemcpyHostToDevice);
+	cudaMemcpy(temp, template_signal,      sizeof(cuDoubleComplex)*width,       cudaMemcpyHostToDevice);
+    
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks((2*width-1)/threadsPerBlock.x + 1, batch/threadsPerBlock.y + 1);
 
-	conv_mat_vec_kernel<<<160, 896>>>(data, devOut, out, width, batch);
+    conv_mat_vec_kernel<<< numOfBlocks, threadsPerBlock >>>(data, temp, out, width, batch);
+    
+    cudaDeviceSynchronize();
+    
+    int err = cudaGetLastError();
 
-	cudaMemcpy(hOut, out, sizeof(cufftComplex)*(2*width-1)*batch, cudaMemcpyDeviceToHost);
+	cudaMemcpy(hOut, out, sizeof(cuDoubleComplex)*(2*width-1)*batch, cudaMemcpyDeviceToHost);
+    
+    if (err != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to Synchronize\n");
+        cout << err << endl;
+		return;
+	}
+
+    for(x = 0; x < batch; x++)
+    {
+        for(y = 0; y < tots; y++)
+        {
+            curr = hOut[x* tots + y];
+            printf("%g + (%gi), ", cuCreal(curr), cuCimag(curr));
+        }
+        cout << endl;
+    }
 
 	cudaFree(data);
 	cudaFree(temp);
@@ -338,11 +229,17 @@ int main()
 
 	float d, i;
 	int count = 437;
-	cufftComplex *sRaw, *signal, *hOut;
+	cuDoubleComplex *sRaw, *signal, *hOut;
 	string value;
-	hOut   = (cufftComplex *)malloc(sizeof(cufftComplex)*(438*2 - 1)*160);
-	signal = (cufftComplex *)malloc(sizeof(cufftComplex)*438);
-	sRaw   = (cufftComplex *)malloc(sizeof(cufftComplex)*438*160);
+	hOut   = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*(438*2 - 1)*160);
+	signal = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*438);
+	sRaw   = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*438*160);
+    cuDoubleComplex curr;
+    int width = 438;
+    int batch = 160;
+    int x,y;
+    int tots = 2*width - 1;
+
     list<string> values;
 
     while ( fastTimeFilter.good() )
@@ -381,17 +278,17 @@ int main()
     }
 
     it = values1.begin();
-	count = 0;
+    count = 0;
     for (it = values1.begin(); it != values1.end(); it++) {
         string tmp = *it;
         d = stof(tmp.c_str(), NULL);
-	    sRaw[count].y = d;
-		count++;
+        sRaw[count].y = d;
+        count++;
         //cout << "Double val: " << right << showpoint << d << endl;
     }
 
-	string value2;
-	list<string> values2;
+    string value2;
+    list<string> values2;
     while ( realsRaw.good() )
     {
         getline ( realsRaw, value2, ',' ); // read a string until next comma: http://www.cplusplus.com/reference/string/getline/
@@ -403,7 +300,7 @@ int main()
     }
 
     it = values2.begin();
-	count = 0;
+    count = 0;
     for (it = values2.begin(); it != values2.end(); it++) {
         string tmp = *it;
         d = stof(tmp.c_str(), NULL);
@@ -415,114 +312,12 @@ int main()
 
 	convolveWithCuda(sRaw, signal, hOut, 438, 160);
 	//hOut is sM after convolution of raw data with p signal
+    //x -> 1-382, y-> 1-266
+    // Loop through both x and y for each u to get an image at a specific u, then add all the images up (combining them by their u)
+    // 
+    free(hOut);
 	free(signal);
 	free(sRaw);
 	cudaDeviceReset();
 	return 0;
-}
-
-// Helper function for using CUDA to add vectors in parallel.
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-{
-    int *dev_a = 0;
-    int *dev_b = 0;
-    int *dev_c = 0;
-    cudaError_t cudaStatus;
-
-    // Choose which GPU to run on, change this on a multi-GPU system.
-    cudaStatus = cudaSetDevice(0);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-        goto Error;
-    }
-
-    // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    // Copy input vectors from host memory to GPU buffers.
-    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    // Launch a kernel on the GPU with one thread for each element.
-    addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
-
-    // Check for any errors launching the kernel
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-        goto Error;
-    }
-    
-    // cudaDeviceSynchronize waits for the kernel to finish, and returns
-    // any errors encountered during the launch.
-    cudaStatus = cudaDeviceSynchronize();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-        goto Error;
-    }
-
-    // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(int), cudaMemcpyDeviceToHost);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-Error:
-    cudaFree(dev_c);
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    
-    return cudaStatus;
-}
-
-//example function for s
-float2 s()
-{
-	float2 total;
-
-	//curandStatus_t curandGenerateUniform(generator, float *outputPtr, size_t num);
-	float rand = 0;
-	// Magnitude rand bound to some distance e.g., 400 to 450 km
-	total.x = rand;
-	// Phase bound by 0 to 2pi
-	total.y = rand;
-	return total;
-}
-
-//example function for sm
-float2 sm( const float2 reflector, const float2 plane, const float u) 
-{
-	float delay;
-	float2 total;
-	
-	delay = 2 * sqrt( ((reflector.x - plane.x)*(reflector.x - plane.x)) + ((reflector.y - plane.y)*(reflector.y - plane.y)) ) / spd_of_light;
-	total.x = delay;
-	total.y = u;
-	return total;
 }
