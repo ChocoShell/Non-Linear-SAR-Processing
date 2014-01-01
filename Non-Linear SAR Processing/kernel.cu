@@ -36,7 +36,6 @@ plot sM in matlab
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <math.h>
 
 #include <iostream>
 #include <fstream>
@@ -64,12 +63,12 @@ plot sM in matlab
 
 // CUDA helper functions
 #include <helper_cuda.h>         // helper functions for CUDA error check
-#include <helper_cuda_gl.h>      // helper functions for CUDA/GL interop
 
 // CUDA Libraries
 #include <cufft.h>
 #include <cufftw.h>
 #include <curand_kernel.h>
+#include <math_functions.h>
 
 #include <vector_types.h>
 
@@ -97,22 +96,93 @@ void split_line(string& line, string delim, list<string>& values)
     }
 }
 
-__global__ void flattenKernel(cuDoubleComplex *matrix_signal, cuDoubleComplex *out_signal, const int width, const int batch)
-{
-	cuDoubleComplex ducks;
-	unsigned int r = (blockIdx.x * blockDim.x) + threadIdx.x;
-	if (width > r)
-	{
-		for (int i = 0; i < batch; i ++)
-		{
-			ducks.x += matrix_signal[i * batch + r].x;
-			ducks.y += matrix_signal[i * batch + r].y;
-		}
-		out_signal[r] = ducks;
-	}
+__global__ void map_kernel(cuDoubleComplex *s_M, cuDoubleComplex *out,
+                           const unsigned int width, const unsigned int batch,
+                           const unsigned int max_x, const unsigned int max_y)
+{   /*s_M is the fast-time matched filtered SAR signal
+     *Because this signal is in discrete time and uses indices 
+     *instead of values, we have to modify the time delay
+     *function to fit between the range 1 and the width of s_M
+    */
+
+    // We will run a total of max_x * max_y threads,
+    // looping through all possible slow time locations
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if(max_y - 1 < row || max_x - 1 < col) return;
+
+    int u;
+    int delay;
+    cuDoubleComplex val;
+    val.x= 0;
+    val.y =0;
+    int uNormal = max_y/batch;
+    for(u = 0; u < batch; u++)
+    {   // The number 1.8821 is width/max(s_m), this will be changed later
+        // It is used to evenly distribute the magnitudes of the map
+        delay = lround(hypot( (double) row, (double) (col - u*uNormal))*0.01281);
+        val.x += s_M[u*width + delay].x;
+        val.y += s_M[u*width + delay].y;        
+    }
+    out[row*max_x + col] = val;
 }
 
-__global__ void conv_mat_vec_kernel(cuDoubleComplex *matrix, cuDoubleComplex *vector, cuDoubleComplex *out, const unsigned int width, const unsigned int batch)
+void mapMaker(cuDoubleComplex *s_M, cuDoubleComplex *mapOut, 
+              const unsigned int width, const unsigned int batch,
+              const unsigned int mapLength, const unsigned int mapWidth)
+{
+    cuDoubleComplex *dS_M, *dMapOut;
+
+    //Allocating memory on GPU
+    cudaMalloc((void**)&dS_M, sizeof(cuDoubleComplex)*width*batch);
+	if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate data\n");
+		return;
+	}
+
+    cudaMalloc((void**)&dMapOut, sizeof(cuDoubleComplex)*mapLength*mapWidth);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate data\n");
+		return;
+	}
+    //Finished Allocation
+
+    //Copying matrix onto device
+    cudaMemcpy(dS_M, s_M, sizeof(cuDoubleComplex)*width*batch, cudaMemcpyHostToDevice);
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(mapLength/threadsPerBlock.x + 1, mapWidth/threadsPerBlock.y + 1);
+
+    map_kernel<<<numOfBlocks, threadsPerBlock>>>(dS_M, dMapOut, width, batch, mapLength, mapWidth);
+
+    cudaMemcpy(mapOut, dMapOut, sizeof(cuDoubleComplex)*mapLength*mapWidth, cudaMemcpyDeviceToHost);
+
+    //Printing map values to console.
+    int x,y;
+    cuDoubleComplex curr;
+    for(y = 0; y < mapWidth; y++)
+    {
+        for(x = 0; x < mapLength; x++)
+        {
+            curr = mapOut[y*mapLength + x];
+            printf("%g + (%gi), ", cuCreal(curr), cuCimag(curr));
+        }
+        cout << endl;
+    }
+    
+    cudaFree(dS_M);
+    cudaFree(dMapOut);
+    return;
+}
+
+__global__ void conv_mat_vec_kernel(cuDoubleComplex *matrix, 
+                                    cuDoubleComplex *vector, 
+                                    cuDoubleComplex *out, 
+                                    const unsigned int width, 
+                                    const unsigned int batch)
 {
 	int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -140,23 +210,26 @@ __global__ void conv_mat_vec_kernel(cuDoubleComplex *matrix, cuDoubleComplex *ve
     //start and end act as Tau in the convolution equation
 	for(start; start < end; start++)
 	{
-        matX = matrix[start].x;
-    	matY = matrix[start].y;
+        matX = matrix[row*width+ start].x;
+    	matY = matrix[row*width + start].y;
 	    vecX = vector[col-start].x;
 	    vecY = vector[col-start].y;
-        sum.x = matX*vecX - matY*vecY;
-		sum.y = matX*vecY + matY*vecX;
+        sum.x += matX*vecX - matY*vecY;
+		sum.y += matX*vecY + matY*vecX;
 	}
 	out[row*maxLen + col] = sum;	
 }
 
-void convolveWithCuda(cuDoubleComplex *unknown_signal_block, cuDoubleComplex *template_signal, cuDoubleComplex *hOut, const int width, const int batch)
+void convolveWithCuda(cuDoubleComplex *unknown_signal_block, 
+                      cuDoubleComplex *template_signal, 
+                      cuDoubleComplex *sM, const unsigned int width, 
+                      const unsigned int batch)
 {	
 	cuDoubleComplex *data, *temp, *out, curr;
-    int x,y;
+    int x, y;
     int tots = 2*width - 1;
 
-	// FFT of return signal matrix
+	//Allocating memory on CUDA device and checking for errrors
 	cudaMalloc((void**)&data, sizeof(cuDoubleComplex)*width*batch);
 	if (cudaGetLastError() != cudaSuccess)
 	{
@@ -177,20 +250,25 @@ void convolveWithCuda(cuDoubleComplex *unknown_signal_block, cuDoubleComplex *te
 		fprintf(stderr, "Cuda error: Failed to allocate temp\n");
 		return;
 	}
+    //Finished Allocating
 
+    //Copying host variables onto the device
 	cudaMemcpy(data, unknown_signal_block, sizeof(cuDoubleComplex)*batch*width, cudaMemcpyHostToDevice);
 	cudaMemcpy(temp, template_signal,      sizeof(cuDoubleComplex)*width,       cudaMemcpyHostToDevice);
     
+    //Setting up the number of threads to run
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks((2*width-1)/threadsPerBlock.x + 1, batch/threadsPerBlock.y + 1);
 
     conv_mat_vec_kernel<<< numOfBlocks, threadsPerBlock >>>(data, temp, out, width, batch);
     
+    //Waiting until all threads are finished
     cudaDeviceSynchronize();
     
     int err = cudaGetLastError();
 
-	cudaMemcpy(hOut, out, sizeof(cuDoubleComplex)*(2*width-1)*batch, cudaMemcpyDeviceToHost);
+    //Retrieving data from device
+	cudaMemcpy(sM, out, sizeof(cuDoubleComplex)*(2*width-1)*batch, cudaMemcpyDeviceToHost);
     
     if (err != cudaSuccess)
 	{
@@ -199,15 +277,16 @@ void convolveWithCuda(cuDoubleComplex *unknown_signal_block, cuDoubleComplex *te
 		return;
 	}
 
+    /* Printing values to console
     for(x = 0; x < batch; x++)
     {
         for(y = 0; y < tots; y++)
         {
-            curr = hOut[x* tots + y];
+            curr = sM[x* tots + y];
             printf("%g + (%gi), ", cuCreal(curr), cuCimag(curr));
         }
         cout << endl;
-    }
+    }*/
 
 	cudaFree(data);
 	cudaFree(temp);
@@ -228,18 +307,27 @@ int main()
 	// End of data read
 
 	float d, i;
-	int count = 437;
-	cuDoubleComplex *sRaw, *signal, *hOut;
-	string value;
-	hOut   = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*(438*2 - 1)*160);
-	signal = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*438);
-	sRaw   = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*438*160);
-    cuDoubleComplex curr;
+    int x,y;
+
+    //Dimensions of sRaw data
     int width = 438;
     int batch = 160;
-    int x,y;
+
+    //Dimensions of final map
+    int mapLength = 382;
+    int mapWidth  = 266;
+
+    //Length of matched filter
     int tots = 2*width - 1;
 
+    int count = width - 1;
+
+	cuDoubleComplex curr, *sRaw, *signal, *sM, *mapOut;
+	string value;
+
+	signal = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*width);
+	sRaw   = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*width*batch);
+    
     list<string> values;
 
     while ( fastTimeFilter.good() )
@@ -251,7 +339,7 @@ int main()
             values.push_back(value);
         }
     }
-
+    //From fast time filter we get p*(-t)
     list<string>::const_iterator it = values.begin();
     for (it = values.begin(); it != values.end(); it++) {
         string tmp = *it;
@@ -310,14 +398,21 @@ int main()
     }
 	//Done Reading in values from files.
 
-	convolveWithCuda(sRaw, signal, hOut, 438, 160);
-	//hOut is sM after convolution of raw data with p signal
+    // Output for convolution
+    sM = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*tots*batch);
+
+	convolveWithCuda(sRaw, signal, sM, width, batch);
+
+    free(signal);
+	free(sRaw);
     //x -> 1-382, y-> 1-266
     // Loop through both x and y for each u to get an image at a specific u, then add all the images up (combining them by their u)
-    // 
-    free(hOut);
-	free(signal);
-	free(sRaw);
+    mapOut = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*mapLength*mapWidth);
+
+    mapMaker(sM, mapOut, tots, batch, mapLength, mapWidth);
+    
+    free(mapOut);
+    free(sM);
 	cudaDeviceReset();
 	return 0;
 }

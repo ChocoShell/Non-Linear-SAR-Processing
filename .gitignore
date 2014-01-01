@@ -6,7 +6,6 @@
 *.user
 *.sln.docstates
 *.csv
-*.txt
 *.mat
 *.vcxproj
 *.sln
