@@ -96,6 +96,64 @@ void split_line(string& line, string delim, list<string>& values)
     }
 }
 
+__global__ void fftshift_kernel(cuDoubleComplex *d_signal,
+                                 const unsigned int width, 
+                                 const unsigned int batch)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (row >= batch || col >= width)
+        return;
+
+    int newrow = (row + batch/2) % batch;
+    int newcol = (col + width/2) % width;
+
+    cuDoubleComplex oldVal = d_signal[col + width*row];
+
+    __syncthreads();
+
+    d_signal[newcol + width*newrow] = oldVal;
+}
+
+void fftshift(cuDoubleComplex *h_signal,
+              const unsigned int width, const unsigned int batch)
+{
+    cuDoubleComplex *d_signal, curr;
+
+    cudaMalloc((void**)&d_signal, sizeof(cuDoubleComplex)*width*batch);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for signal\n");
+		return;
+	}
+
+    //Copying matrix onto device
+    cudaMemcpy(d_signal, h_signal, sizeof(cuDoubleComplex)*width*batch,
+               cudaMemcpyHostToDevice);
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(width/threadsPerBlock.x + 1, batch/threadsPerBlock.y + 1);
+
+    fftshift_kernel<<<numOfBlocks, threadsPerBlock>>>(d_signal, width, batch);
+
+    cudaMemcpy(h_signal, d_signal, sizeof(cuDoubleComplex)*width*batch, cudaMemcpyDeviceToHost);
+
+    cudaFree(d_signal);
+
+    for(int x = 0; x < batch; x++)
+    {
+        for(int y = 0; y < width; y++)
+        {
+            curr = h_signal[x* width + y];
+            printf("%g + (%gi), ", cuCreal(curr), cuCimag(curr));
+        }
+        cout << endl;
+    }
+
+    return;
+}
+
 __global__ void map_kernel(cuDoubleComplex *s_M, cuDoubleComplex *out,
                            const unsigned int width, const unsigned int batch,
                            const unsigned int max_x, const unsigned int max_y)
@@ -294,6 +352,8 @@ void convolveWithCuda(cuDoubleComplex *unknown_signal_block,
 	return;
 }
 
+
+
 int main()
 {
 	//new code
@@ -399,20 +459,14 @@ int main()
 	//Done Reading in values from files.
 
     // Output for convolution
-    sM = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*tots*batch);
+    //sM = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*tots*batch);
 
-	convolveWithCuda(sRaw, signal, sM, width, batch);
+	//convolveWithCuda(sRaw, signal, sM, width, batch);
 
+    fftshift(sRaw, width, batch);
+        
+    //free(sM);
+    free(sRaw);
     free(signal);
-	free(sRaw);
-    //x -> 1-382, y-> 1-266
-    // Loop through both x and y for each u to get an image at a specific u, then add all the images up (combining them by their u)
-    mapOut = (cuDoubleComplex *)malloc(sizeof(cuDoubleComplex)*mapLength*mapWidth);
-
-    mapMaker(sM, mapOut, tots, batch, mapLength, mapWidth);
-    
-    free(mapOut);
-    free(sM);
-	cudaDeviceReset();
 	return 0;
 }
