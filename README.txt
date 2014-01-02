@@ -9,6 +9,7 @@
     - Cuda math functions                                           |
     - Matrix-Matrix Multiplication for two arrays -> Implement      |
     - Sinc function for spatial interpolate                         |
+    - Matrix Transpose                                              | Done
 5. Outline differences between Matlab code and paper                |
 6. List differences:
     -
