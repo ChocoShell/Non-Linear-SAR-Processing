@@ -96,6 +96,164 @@ void split_line(string& line, string delim, list<string>& values)
     }
 }
 
+__global__ void vec_vec_mult(cuDoubleComplex *d_vec1,
+                             cuDoubleComplex *d_vec2,
+                             cuDoubleComplex *d_out,
+                             const unsigned int length,
+                             const unsigned int width)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    int newRow, ind;
+    double a1, a2, b1, b2;
+
+    if (row*BLOCK_SIZE >= length || col >= width) {return;}
+
+    for (int i = 0; i < BLOCK_SIZE; i++)
+    {
+        newRow = (BLOCK_SIZE*row) + i;
+        if(newRow < length)
+        {
+            ind = col + width*newRow;
+            a1 = d_vec1[ind].x;
+            b1 = d_vec1[ind].y;
+
+            a2 = d_vec2[ind].x;
+            b2 = d_vec2[ind].y;
+
+            d_out[ind].x = a1*a2 - b1*b2;
+            d_out[ind].y = a1*b2 + b1*a2;
+        }
+    }
+}
+
+void vec_vec_mult(cuDoubleComplex *h_vec1,
+                  cuDoubleComplex *h_vec2,
+                  const unsigned int length,
+                  const unsigned int width)
+{
+    //Element wise multiplication of 2 vectors, output is placed in h_vec1
+    cuDoubleComplex *d_vec1, *d_vec2, *d_out;
+
+    cudaMalloc((void**)&d_vec1, sizeof(cuDoubleComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_vec2, sizeof(cuDoubleComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_out, sizeof(cuDoubleComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    //Copying vectors onto device
+    cudaMemcpy(d_vec1, h_vec1, sizeof(cuDoubleComplex)*width*length,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    cudaMemcpy(d_vec2, h_vec2, sizeof(cuDoubleComplex)*width*length,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(width/(threadsPerBlock.x + BLOCK_SIZE) + 1, length/threadsPerBlock.y + 1);
+
+    sca_vec_mult_kernel<<<numOfBlocks, threadsPerBlock>>>(K, d_vector, length, width);
+
+    cudaMemcpy(h_vec1, d_out, sizeof(cuDoubleComplex)*width*length,
+               cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
+		return;
+	}
+
+    cudaFree(d_vec1);
+    cudaFree(d_vec2);
+    cudaFree(d_out);
+}
+
+__global__ void sca_vec_mult_kernel(const double K, 
+                                    cuDoubleComplex *d_vector,
+                                    const unsigned int length,
+                                    const unsigned int width)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    int newRow;
+
+    if (row*BLOCK_SIZE >= length || col >= width) {return;}
+
+    for (int i = 0; i < BLOCK_SIZE; i++)
+    {
+        newRow = (BLOCK_SIZE*row) + i;
+        if(newRow < length)
+        {
+            d_vector[col + width*newRow].x *= K;
+            d_vector[col + width*newRow].y *= K;
+        }
+    }
+}
+
+void sca_vec_mult(const double K,
+                  cuDoubleComplex *h_vector,
+                  const unsigned int length,
+                  const unsigned int width)
+{
+    cuDoubleComplex *d_vector;
+
+    cudaMalloc((void**)&d_vector, sizeof(cuDoubleComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    //Copying vector onto device
+    cudaMemcpy(d_vector, h_vector, sizeof(cuDoubleComplex)*width*length,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(width/(threadsPerBlock.x + BLOCK_SIZE) + 1, length/threadsPerBlock.y + 1);
+
+    sca_vec_mult_kernel<<<numOfBlocks, threadsPerBlock>>>(K, d_vector, length, width);
+
+    cudaMemcpy(h_vector, d_vector, sizeof(cuDoubleComplex)*width*length,
+               cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
+		return;
+	}
+
+    cudaFree(d_vector);
+}
+
 __global__ void transpose_kernel(cuDoubleComplex *d_matrix, 
                                  cuDoubleComplex *d_out,
                                  const unsigned int length, 
@@ -169,7 +327,8 @@ void transpose(cuDoubleComplex *h_matrix,
 __global__ void fftshift_kernel(cuDoubleComplex *d_signal,
                                 cuDoubleComplex *d_out,
                                 const unsigned int width, 
-                                const unsigned int batch)
+                                const unsigned int batch,
+                                const int dim)
 {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -177,9 +336,15 @@ __global__ void fftshift_kernel(cuDoubleComplex *d_signal,
     if ((row >= batch) || (col >= width))
         return;
 
-    int newrow = (row + batch/2) % batch;
-    int newcol = (col + width/2) % width;
+    int newcol = col;
+    int newrow = row;
 
+    if (dim != 1) 
+        newcol = (col + width/2) % width;
+
+    if (dim != 2) 
+        newrow = (row + batch/2) % batch;
+    
     d_out[newcol + newrow*width] = d_signal[col + row*width];
 }
 
@@ -209,7 +374,7 @@ void fftshift(cuDoubleComplex *h_signal,
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(width/threadsPerBlock.x + 1, batch/threadsPerBlock.y + 1);
 
-    fftshift_kernel<<<numOfBlocks, threadsPerBlock>>>(d_signal, d_out, width, batch);
+    fftshift_kernel<<<numOfBlocks, threadsPerBlock>>>(d_signal, d_out, width, batch, 2);
 
     cudaMemcpy(h_signal, d_out, sizeof(cuDoubleComplex)*width*batch,
                cudaMemcpyDeviceToHost);
