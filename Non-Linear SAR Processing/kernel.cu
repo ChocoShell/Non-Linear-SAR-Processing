@@ -96,13 +96,42 @@ void split_line(string& line, string delim, list<string>& values)
     }
 }
 
+//kernel functions
+__global__ void square_kernel(cuComplex *d_vector, cuComplex *d_out, const unsigned int length, const unsigned int width)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row >= length || col >= width) {return;}
+
+    d_out[width*row + col] = cuCmulf(d_vector[width*row + col], d_vector[width*row + col]);
+}
+__global__ void sqrt_abs_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned int length, const unsigned int width)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row >= length || col >= width) {return;}
+
+    d_out[width*row + col].x = rsqrtf(cuCabsf(d_in[width*row + col]));
+    d_out[width*row + col].y = 0;
+}
+__global__ void real_to_imag_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned int length, const unsigned int width)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row >= length || col >= width) {return;}
+    
+    d_out[width*row + col].x = 0;
+    d_out[width*row + col].y = d_in[width*row + col].x;
+}
 __global__ void vec_vec_mult_kernel(cuComplex *d_vec1, cuComplex *d_vec2, cuComplex *d_out, const unsigned int length, const unsigned int width)
 {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
 
     int newRow, ind;
-    double a1, a2, b1, b2;
 
     if (row*BLOCK_SIZE >= length || col >= width) {return;}
 
@@ -116,7 +145,249 @@ __global__ void vec_vec_mult_kernel(cuComplex *d_vec1, cuComplex *d_vec2, cuComp
         }
     }
 }
+__global__ void vec_vec_mat_kernel(cuComplex *d_vec1, cuComplex *d_vec2, cuComplex *d_out, const unsigned int len_1, const unsigned int len_2)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
 
+    if (row >= len_1 || col >= len_2) {return;}
+
+    d_out[len_2*row + col] = cuCmulf(d_vec1[row], d_vec2[col]);
+}
+__global__ void sca_vec_add_kernel(const double K, cuComplex *d_vector, const unsigned length, const unsigned int width, const double M)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row >= length || col >= width) {return;}
+
+    d_vector[width*row + col].x = K + M*d_vector[width*row + col].x;
+    d_vector[width*row + col].y = M*d_vector[width*row + col].y;
+}
+__global__ void sca_vec_mult_kernel(const double K, cuComplex *d_vector, const unsigned int length, const unsigned int width)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    int newRow;
+
+    if (row*BLOCK_SIZE >= length || col >= width) {return;}
+
+    for (int i = 0; i < BLOCK_SIZE; i++)
+    {
+        newRow = (BLOCK_SIZE*row) + i;
+        if(newRow < length)
+        {
+            d_vector[col + width*newRow].x *= K;
+            d_vector[col + width*newRow].y *= K;
+        }
+    }
+}
+__global__ void transpose_kernel(cuComplex *d_matrix, cuComplex *d_out, const unsigned int length, const unsigned int width)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    int newRow;
+
+    if (row*BLOCK_SIZE >= length || col >= width) {return;}
+
+    for (int i = 0; i < BLOCK_SIZE; i++)
+    {
+        newRow = (BLOCK_SIZE*row) + i;
+        if(newRow < length)
+        {
+            d_out[length*col + newRow] = d_matrix[col + width*newRow];
+        }
+    }
+    return;
+}
+__global__ void fftshift_kernel(cuComplex *d_signal, cuComplex *d_out, const unsigned int width, const unsigned int batch, const int dim)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if ((row >= batch) || (col >= width))
+        return;
+
+    int newcol = col;
+    int newrow = row;
+
+    if (dim != 1) 
+        newcol = (col + width/2 +3) % width;
+
+    if (dim != 2) 
+        newrow = (row + batch/2 +3) % batch;
+    
+    d_out[newcol + newrow*width] = d_signal[col + row*width];
+}
+__global__ void map_kernel(cuComplex *s_M, cuComplex *out, const unsigned int width, const unsigned int batch, const unsigned int max_x, const unsigned int max_y)
+{   /*s_M is the fast-time matched filtered SAR signal
+     *Because this signal is in discrete time and uses indices 
+     *instead of values, we have to modify the time delay
+     *function to fit between the range 1 and the width of s_M
+    */
+
+    // We will run a total of max_x * max_y threads,
+    // looping through all possible slow time locations
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if(max_y - 1 < row || max_x - 1 < col) return;
+
+    int u;
+    int delay;
+    cuComplex val;
+    val.x= 0;
+    val.y =0;
+    int uNormal = max_y/batch;
+    for(u = 0; u < batch; u++)
+    {   // The number 1.8821 is width/max(s_m), this will be changed later
+        // It is used to evenly distribute the magnitudes of the map
+        delay = lround(hypot( (double) row, (double) (col - u*uNormal))*0.01281);
+        val.x += s_M[u*width + delay].x;
+        val.y += s_M[u*width + delay].y;        
+    }
+    out[row*max_x + col] = val;
+    return;
+}
+__global__ void mat_vec_mult_kernel(cuComplex *matrix, cuComplex *vector, cuComplex *out, const unsigned int width, const unsigned int batch)
+{
+	int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row >= batch || col >= width) {return;}
+
+    out[row*width + col] = cuCmulf(matrix[row*width + col], vector[col]);
+}
+
+// kernel helpers
+void square(cuComplex *h_vector, cuComplex *h_out, const unsigned int length, const unsigned int width)
+{
+    cuComplex *d_vector, *d_out;
+
+    cudaMalloc((void**)&d_vector, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMemcpy(d_vector, h_vector, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/threadsPerBlock.y + 1);
+
+    square_kernel<<<numOfBlocks, threadsPerBlock>>>(d_vector, d_vector, length, width);
+
+    cudaMemcpy(h_vector, d_out, sizeof(cuComplex)*width*length,
+               cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
+		return;
+	}
+
+    cudaFree(d_out);
+    cudaFree(d_vector);
+}
+void sqrt_abs(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const unsigned int width)
+{
+    cuComplex *d_in, *d_out;
+
+    cudaMalloc((void**)&d_in, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/threadsPerBlock.y + 1);
+
+    sqrt_abs_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
+
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
+               cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
+		return;
+	}
+
+    cudaFree(d_in);
+    cudaFree(d_out);
+}
+void real_to_imag(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const unsigned int width)
+{
+    cuComplex *d_in, *d_out;
+
+    cudaMalloc((void**)&d_in, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/threadsPerBlock.y + 1);
+
+    real_to_imag_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
+
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
+               cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
+		return;
+	}
+
+    cudaFree(d_in);
+    cudaFree(d_out);
+}
 void vec_vec_mult(cuComplex *h_vec1, cuComplex *h_vec2, const unsigned int length, const unsigned int width)
 {
     //Element wise multiplication of 2 vectors, output is placed in h_vec1
@@ -177,27 +448,99 @@ void vec_vec_mult(cuComplex *h_vec1, cuComplex *h_vec2, const unsigned int lengt
     cudaFree(d_vec2);
     cudaFree(d_out);
 }
-
-__global__ void sca_vec_mult_kernel(const double K, cuComplex *d_vector, const unsigned int length, const unsigned int width)
+void vec_vec_mat(cuComplex *h_vec1, cuComplex *h_vec2, cuComplex *h_out, const unsigned int len_1, const unsigned int len_2)
 {
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    cuComplex *d_vec1, *d_vec2, *d_out;
 
-    int newRow;
+    cudaMalloc((void**)&d_vec1, sizeof(cuComplex)*len_1);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
 
-    if (row*BLOCK_SIZE >= length || col >= width) {return;}
+    cudaMalloc((void**)&d_vec2, sizeof(cuComplex)*len_2);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
 
-    for (int i = 0; i < BLOCK_SIZE; i++)
-    {
-        newRow = (BLOCK_SIZE*row) + i;
-        if(newRow < length)
-        {
-            d_vector[col + width*newRow].x *= K;
-            d_vector[col + width*newRow].y *= K;
-        }
-    }
+    cudaMalloc((void**)&d_out, sizeof(cuComplex)*len_1*len_2);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    //Copying vectors onto device
+    cudaMemcpy(d_vec1, h_vec1, sizeof(cuComplex)*len_1,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    cudaMemcpy(d_vec2, h_vec2, sizeof(cuComplex)*len_2,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(len_2/threadsPerBlock.x + 1, len_1/threadsPerBlock.y + 1);
+
+    vec_vec_mat_kernel<<<numOfBlocks, threadsPerBlock>>>(d_vec1, d_vec2, d_out, len_1, len_2);
+
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*len_2*len_1,
+               cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+    
+    cudaFree(d_out);
+    cudaFree(d_vec1);
+    cudaFree(d_vec2);
 }
+void sca_vec_add(const double K, cuComplex *h_vector, const unsigned length, const unsigned int width, const double M)
+{
+    cuComplex *d_vector;
 
+    cudaMalloc((void**)&d_vector, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMemcpy(d_vector, h_vector, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/threadsPerBlock.y + 1);
+
+    sca_vec_add_kernel<<<numOfBlocks, threadsPerBlock>>>(K, d_vector, length, width, M);
+
+    cudaMemcpy(h_vector, d_vector, sizeof(cuComplex)*width*length,
+               cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    cudaFree(d_vector);
+}
 void sca_vec_mult(const double K, cuComplex *h_vector, const unsigned int length, const unsigned int width)
 {
     cuComplex *d_vector;
@@ -233,27 +576,6 @@ void sca_vec_mult(const double K, cuComplex *h_vector, const unsigned int length
 
     cudaFree(d_vector);
 }
-
-__global__ void transpose_kernel(cuComplex *d_matrix, cuComplex *d_out, const unsigned int length, const unsigned int width)
-{
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    
-    int newRow;
-
-    if (row*BLOCK_SIZE >= length || col >= width) {return;}
-
-    for (int i = 0; i < BLOCK_SIZE; i++)
-    {
-        newRow = (BLOCK_SIZE*row) + i;
-        if(newRow < length)
-        {
-            d_out[length*col + newRow] = d_matrix[col + width*newRow];
-        }
-    }
-    return;
-}
-
 void transpose(cuComplex *h_matrix, const unsigned int width, const unsigned int batch)
 {
     cuComplex *d_matrix, *d_out, curr;
@@ -298,27 +620,6 @@ void transpose(cuComplex *h_matrix, const unsigned int width, const unsigned int
 
     return;
 }
-
-__global__ void fftshift_kernel(cuComplex *d_signal, cuComplex *d_out, const unsigned int width, const unsigned int batch, const int dim)
-{
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    
-    if ((row >= batch) || (col >= width))
-        return;
-
-    int newcol = col;
-    int newrow = row;
-
-    if (dim != 1) 
-        newcol = (col + width/2 +3) % width;
-
-    if (dim != 2) 
-        newrow = (row + batch/2 +3) % batch;
-    
-    d_out[newcol + newrow*width] = d_signal[col + row*width];
-}
-
 void fftshift(cuComplex *h_signal, const unsigned int width, const unsigned int batch, const int dim)
 {
     cuComplex *d_signal, *d_out, curr;
@@ -354,40 +655,8 @@ void fftshift(cuComplex *h_signal, const unsigned int width, const unsigned int 
     
     return;
 }
-
-__global__ void map_kernel(cuComplex *s_M, cuComplex *out, const unsigned int width, const unsigned int batch, const unsigned int max_x, const unsigned int max_y)
-{   /*s_M is the fast-time matched filtered SAR signal
-     *Because this signal is in discrete time and uses indices 
-     *instead of values, we have to modify the time delay
-     *function to fit between the range 1 and the width of s_M
-    */
-
-    // We will run a total of max_x * max_y threads,
-    // looping through all possible slow time locations
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if(max_y - 1 < row || max_x - 1 < col) return;
-
-    int u;
-    int delay;
-    cuComplex val;
-    val.x= 0;
-    val.y =0;
-    int uNormal = max_y/batch;
-    for(u = 0; u < batch; u++)
-    {   // The number 1.8821 is width/max(s_m), this will be changed later
-        // It is used to evenly distribute the magnitudes of the map
-        delay = lround(hypot( (double) row, (double) (col - u*uNormal))*0.01281);
-        val.x += s_M[u*width + delay].x;
-        val.y += s_M[u*width + delay].y;        
-    }
-    out[row*max_x + col] = val;
-    return;
-}
-
 void mapMaker(cuComplex *s_M, cuComplex *mapOut, const unsigned int width, const unsigned int batch, const unsigned int mapLength, const unsigned int mapWidth)
-{
+{// Multiplies vector of certain width by each row in matrix
     cuComplex *dS_M, *dMapOut;
 
     //Allocating memory on GPU
@@ -421,23 +690,7 @@ void mapMaker(cuComplex *s_M, cuComplex *mapOut, const unsigned int width, const
     cudaFree(dMapOut);
     return;
 }
-
-__global__ void mat_vec_mult_kernel(cuComplex *matrix, cuComplex *vector, cuComplex *out, const unsigned int width, const unsigned int batch)
-{
-	int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (row >= batch || col >= width) {return;}
-
-    out[row*width + col] = cuCmulf(matrix[row*width + col], vector[col]);
-}
-
-// Multiplies vector of certain width by each row in matrix
-void mat_vec_mult(cuComplex *h_matrix, 
-                  cuComplex *h_vector, 
-                  cuComplex *h_out, 
-                  const unsigned int width, 
-                  const unsigned int batch)
+void mat_vec_mult(cuComplex *h_matrix, cuComplex *h_vector, cuComplex *h_out, const unsigned int width, const unsigned int batch)
 {
     cuComplex *d_matrix, *d_vector, *d_out;
 
@@ -491,29 +744,42 @@ void mat_vec_mult(cuComplex *h_matrix,
 }
 
 // Produces Compression Constants
-void comp_decomp(const float Xc, float *uc, const int length, 
-                 float *k, const int width)
+void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u, const int u_len, cuComplex *k, const int width)
 {
-    // Square constant
-    Xc*Xc;
-    
+    cuComplex *compression, *decompression;
+
+    compression = (cuComplex *)malloc(sizeof(cuComplex)*length*width);
+    decompression = (cuComplex *)malloc(sizeof(cuComplex)*u_len*width);
+
     // fftshift uc
     fftshift(uc, length, 1, 0);
     
-    // square vector
-    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 numOfBlocks(length/threadsPerBlock.x + 1, 1/threadsPerBlock.y + 1);
-    square_kernel<<<numOfBlocks, threadsPerBlock>>>(uc, uc, length);
+    // Square each element
+    square(uc, uc, length, 1);
+    square(u, u, u_len, 1);
 
     // add constant to vector
+    sca_vec_add(Xc*Xc, uc, length, 1, 1);
+    sca_vec_add(Xc*Xc, u, u_len, 1, 1);
 
+    // sqrt(abs complex vector)
+    sqrt_abs(uc, uc, length, 1);
+    sqrt_abs(u, u, u_len, 1);
 
-    // abs complex vector
-    // sqrt real vector
     // subtract contant from vector
+    sca_vec_add(-1.0*Xc, uc, length, 1, 1.0);
+    // Xc - u
+    sca_vec_add(Xc, u, u_len, 1, -1.0);
+
     // change real vector imaginary vector
+    real_to_imag(k, k, width, 1);
+    sca_vec_mult(2.0, k, width, 1);
+
     // mult vec vec to matrix
-    // exp mat WRITE THIS
+    vec_vec_mat(uc, k, compression, length, width);
+    vec_vec_mat(k, u, decompression, width, u_len);
+
+    // exp mat
 
 }
 
