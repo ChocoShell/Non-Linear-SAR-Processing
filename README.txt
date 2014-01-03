@@ -2,7 +2,7 @@
 2. Add CUDA notes to Matlab code for code audit.                    | Done
 
 3. Test cuFFT to see how it works.
-    - Make sure FFT on sRaw and ifft on sRaw return the same result | Later
+    - Make sure FFT on sRaw and ifft on sRaw return the same result | Later-->
 
 4. CUDA stuff:
     - fftshift  - Needs to be implemented, need to sync threads     | Done
@@ -17,3 +17,5 @@
 5. Outline differences between Matlab code and paper                |
 6. List differences:
     -
+
+Start CUDA-izing matlab code
