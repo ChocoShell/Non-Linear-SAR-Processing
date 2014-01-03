@@ -803,11 +803,6 @@ void mat_vec_mult(cuComplex *h_matrix, cuComplex *h_vector, cuComplex *h_out, co
 // Produces Compression Constants
 void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u, const int u_len, cuComplex *k, const int width, cuComplex *compression, cuComplex *decompression)
 {
-    /*cuComplex *compression, *decompression;
-
-    compression = (cuComplex *)malloc(sizeof(cuComplex)*length*width);
-    decompression = (cuComplex *)malloc(sizeof(cuComplex)*u_len*width);
-    */
     // fftshift uc
     fftshift(uc, length, 1, 0);
     
@@ -855,6 +850,10 @@ int main()
 
 	float d, i;
     int x,y;
+    
+    float Xc = 1000.0;
+    // Make uc linspace(-100.0, 98.75, 160);
+    // export u
 
     //Dimensions of sRaw data
     int width = 438;
@@ -1005,6 +1004,13 @@ int main()
     fftshift(signal, width, 1, 0);
 
     mat_vec_mult(sRaw, signal, sRaw, width, batch);
+
+    cuComplex *compression, *decompression;
+
+    compression = (cuComplex *)malloc(sizeof(cuComplex)*batch*width);
+    decompression = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*width);
+
+    //comp_decomp(Xc, uc, batch, u, mapLength, k, width, compression, decompression);
 
     for(int x = 0; x < batch; x++)
     {
