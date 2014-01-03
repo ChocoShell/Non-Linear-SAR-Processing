@@ -12,8 +12,16 @@
     - Cuda math functions                                           | 
     - Vector-Vector to Matrix Multiplication for two arrays         | Done
     - Sinc function for spatial interpolate                         | 
+    - Import variables from matlab data: u, uc, k, kx               |
     - Matrix Transpose                                              | Done
+    - Test Compression and Decompression                            |
+
+5. Matlab Blocks
+   - Fast-time filter & Digital Spotlight                           | 75%
+   - Two-D Matched Filter Block                                     | 50%
+   - To Display Block                                               | 33%
+   - Spatial Interpolate                                            | 
     
-5. Outline differences between Matlab code and paper                |
-6. List differences:
+6. Outline differences between Matlab code and paper                |
+7. List differences:
     -

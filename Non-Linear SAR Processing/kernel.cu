@@ -6,30 +6,8 @@ Programming the algorithms in Non-Linear SAR Processing paper
 6. Code equation 12
 7. Section 3.5 mx, my = xi, yi = location of reflector
 
-//Further Stuff
-Read Section 4 and 5 as separate paper
+New Not Dumb Plan
 
-//New Plan
-0. Figure out how to plot 3d graphs in C++/CUDA
-1. Randomly Generate Map (X v Y with amplitudes -> 250 x 100, x = 1000:2:1500, y = 100:200)
-2. Plot Map on Figure 1
-3. Generate Plane Function length 100 -> x in range [0,50] y in range [50,250]
-4. Plot Plane on Figure 1
-5. Generate Radar Signal (Simple Chirp)
-6. Plot Radar Signal on Figure 2
-7. Simulate SAR Data -> Get delay and attenuation(magnitude) from map(x,y), add gaussian noise to return signal
-                     -> Do this 100 times 
-8. Get sm(x,y,u) = sm(t,u) = s(x, y, u) * p*(-t) -> Same length use as function indices not matching delays
-9. Integrate sm(x,y,u) over u to get f(x,y)
-10. Plot f(x,y) compare with the first map
-
-// Help from:
-http://nehe.gamedev.net/tutorial/your_first_polygon/13002/
-http://www.wikihow.com/Make-a-Cube-in-OpenGL
-
-New New Plan
-Write own convolution function
-plot sM in matlab
 
 */
 // includes, system
@@ -104,7 +82,8 @@ __global__ void square_kernel(cuComplex *d_vector, cuComplex *d_out, const unsig
 
     if (row >= length || col >= width) {return;}
 
-    d_out[width*row + col] = cuCmulf(d_vector[width*row + col], d_vector[width*row + col]);
+    d_out[width*row + col].x = cuCabsf(d_vector[width*row + col]) * cuCabsf(d_vector[width*row + col]);
+    d_out[width*row + col].y = 0.0;
 }
 __global__ void sqrt_abs_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned int length, const unsigned int width)
 {
@@ -877,7 +856,8 @@ int main()
 
     while ( fastTimeFilter.good() )
     {
-        getline ( fastTimeFilter, value, ',' ); // read a string until next comma: http://www.cplusplus.com/reference/string/getline/
+        // read a string until next comma: http://www.cplusplus.com/reference/string/getline/
+        getline ( fastTimeFilter, value, ',' ); 
         if (value.find('\n') != string::npos) {
             split_line(value, "\n", values);
         } else {
@@ -1011,6 +991,7 @@ int main()
     decompression = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*width);
 
     //comp_decomp(Xc, uc, batch, u, mapLength, k, width, compression, decompression);
+    //GET UC, U, K
 
     for(int x = 0; x < batch; x++)
     {
