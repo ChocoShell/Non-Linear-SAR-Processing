@@ -116,6 +116,21 @@ __global__ void sqrt_abs_kernel(cuComplex *d_in, cuComplex *d_out, const unsigne
     d_out[width*row + col].x = rsqrtf(cuCabsf(d_in[width*row + col]));
     d_out[width*row + col].y = 0;
 }
+__global__ void exp_mat_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned int length, const unsigned int width)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row >= length || col >= width) {return;}
+
+    cuComplex res;
+    float s, c;
+    float e = expf(d_in[width*row + col].x);
+    sincosf(d_in[width*row + col].y, &s, &c);
+
+    d_out[width*row + col].x = c * e;
+    d_out[width*row + col].y = s * e;
+}
 __global__ void real_to_imag_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned int length, const unsigned int width)
 {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -334,6 +349,48 @@ void sqrt_abs(cuComplex *h_in, cuComplex *h_out, const unsigned int length, cons
     dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/threadsPerBlock.y + 1);
 
     sqrt_abs_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
+
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
+               cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
+		return;
+	}
+
+    cudaFree(d_in);
+    cudaFree(d_out);
+}
+void exp_mat(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const unsigned int width)
+{
+    cuComplex *d_in, *d_out;
+
+    cudaMalloc((void**)&d_in, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/threadsPerBlock.y + 1);
+
+    exp_mat_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
 
     cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
                cudaMemcpyDeviceToHost);
@@ -744,13 +801,13 @@ void mat_vec_mult(cuComplex *h_matrix, cuComplex *h_vector, cuComplex *h_out, co
 }
 
 // Produces Compression Constants
-void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u, const int u_len, cuComplex *k, const int width)
+void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u, const int u_len, cuComplex *k, const int width, cuComplex *compression, cuComplex *decompression)
 {
-    cuComplex *compression, *decompression;
+    /*cuComplex *compression, *decompression;
 
     compression = (cuComplex *)malloc(sizeof(cuComplex)*length*width);
     decompression = (cuComplex *)malloc(sizeof(cuComplex)*u_len*width);
-
+    */
     // fftshift uc
     fftshift(uc, length, 1, 0);
     
@@ -780,7 +837,8 @@ void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u,
     vec_vec_mat(k, u, decompression, width, u_len);
 
     // exp mat
-
+    exp_mat(compression, compression, width, length);
+    exp_mat(decompression, decompression, u_len, length);
 }
 
 int main()
