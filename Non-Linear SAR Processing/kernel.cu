@@ -462,7 +462,7 @@ void real_to_imag(cuComplex *h_in, cuComplex *h_out, const unsigned int length, 
     cudaFree(d_in);
     cudaFree(d_out);
 }
-void vec_vec_mult(cuComplex *h_vec1, cuComplex *h_vec2, const unsigned int length, const unsigned int width)
+void vec_vec_mult(cuComplex *h_vec1, cuComplex *h_vec2, cuComplex *h_out, const unsigned int length, const unsigned int width)
 {
     //Element wise multiplication of 2 vectors, output is placed in h_vec1
     cuComplex *d_vec1, *d_vec2, *d_out;
@@ -506,11 +506,11 @@ void vec_vec_mult(cuComplex *h_vec1, cuComplex *h_vec2, const unsigned int lengt
 	}
 
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 numOfBlocks(width/(threadsPerBlock.x + BLOCK_SIZE) + 1, length/threadsPerBlock.y + 1);
+    dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/(threadsPerBlock.y + BLOCK_SIZE) + 1);
 
     vec_vec_mult_kernel<<<numOfBlocks, threadsPerBlock>>>(d_vec1, d_vec2, d_out, length, width);
 
-    cudaMemcpy(h_vec1, d_out, sizeof(cuComplex)*width*length,
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
                cudaMemcpyDeviceToHost);
     if (cudaGetLastError() != cudaSuccess)
 	{
@@ -521,6 +521,7 @@ void vec_vec_mult(cuComplex *h_vec1, cuComplex *h_vec2, const unsigned int lengt
     cudaFree(d_vec1);
     cudaFree(d_vec2);
     cudaFree(d_out);
+    return;
 }
 void vec_vec_mat(cuComplex *h_vec1, cuComplex *h_vec2, cuComplex *h_out, const unsigned int len_1, const unsigned int len_2)
 {
@@ -636,7 +637,7 @@ void sca_vec_mult(const double K, cuComplex *h_vector, const unsigned int length
 	}
 
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 numOfBlocks(width/(threadsPerBlock.x + BLOCK_SIZE) + 1, length/threadsPerBlock.y + 1);
+    dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/(threadsPerBlock.y + BLOCK_SIZE) + 1);
 
     sca_vec_mult_kernel<<<numOfBlocks, threadsPerBlock>>>(K, d_vector, length, width);
 
@@ -997,11 +998,13 @@ int main()
 
     comp_decomp(Xc, uc, batch, u, mapLength, k, width, compression, decompression);
 
+    vec_vec_mult(sRaw, compression, sRaw, width, batch);
+
     for(int x = 0; x < batch; x++)
     {
         for(int y = 0; y < width; y++)
         {
-            curr = compression[x*width + y];
+            curr = sRaw[x*width + y];
             printf("%g + (%gi), ", cuCrealf(curr), cuCimagf(curr));
         }
         cout << endl;
