@@ -1051,9 +1051,9 @@ int main()
 
     pad(sRaw, padded_data, batch, width, batch/2, mapLength - batch);
     //transpose(sRaw, batch, width);
+    sca_vec_mult(m/mc, padded_data, mapLength, width);
+    fft(padded_data, mapLength, width, CUFFT_INVERSE);
     transpose(padded_data, mapLength, width);
-    sca_vec_mult(m/mc, padded_data, width, mapLength);
-    //fft(padded_data, width, mapLength, CUFFT_INVERSE);
     //vec_vec_mult(padded_data, decompression, padded_data, width, mapLength);
 
     //fft(padded_data, width, mapLength);
