@@ -1055,7 +1055,7 @@ int main()
     fft(padded_data, mapLength, width, CUFFT_INVERSE);
     vec_vec_mult(padded_data, decompression, padded_data, mapLength, width);
 
-    sca_vec_mult(1.0/mapLength, padded_data, mapLength, width);
+    sca_vec_mult(sqrt(2.0)/(mapLength*1.0), padded_data, mapLength, width);
 
     fft(padded_data, mapLength, width, CUFFT_FORWARD);
 
