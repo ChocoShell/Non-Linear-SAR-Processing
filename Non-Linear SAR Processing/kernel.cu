@@ -899,7 +899,7 @@ void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u,
 
     // exp mat
     exp_mat(compression, compression, width, length);
-    exp_mat(decompression, decompression, u_len, length);
+    exp_mat(decompression, decompression, u_len, width);
     return;
 }
 
@@ -1053,13 +1053,15 @@ int main()
     //transpose(sRaw, batch, width);
     sca_vec_mult(m/mc, padded_data, mapLength, width);
     fft(padded_data, mapLength, width, CUFFT_INVERSE);
+    vec_vec_mult(padded_data, decompression, padded_data, mapLength, width);
+
+    sca_vec_mult(1.0/mapLength, padded_data, mapLength, width);
+
+    fft(padded_data, mapLength, width, CUFFT_FORWARD);
+
+    fftshift(padded_data, mapLength, width, 2);
+
     transpose(padded_data, mapLength, width);
-    //vec_vec_mult(padded_data, decompression, padded_data, width, mapLength);
-
-    //fft(padded_data, width, mapLength);
-
-    //fftshift(padded_data, widthm map_length, 2);
-
     // Two-D Matched Fitler
 
     for(int x = 0; x < mapLength; x++)
