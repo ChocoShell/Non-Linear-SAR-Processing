@@ -290,14 +290,14 @@ __global__ void pad_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned int
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     
     if (row >= width || col >= (padLength+length)) {return;}
-    int ind = row*length + col;
+    int newind = row*(length+padLength) + col;
 
     if (col < padInd)
-        d_out[ind] = d_in[ind];
+        d_out[newind] = d_in[row*length + col];
     else if (col < padLength + padInd)
-        d_out[ind] = make_cuComplex(0,0);
+        d_out[newind] = make_cuComplex(0,0);
     else 
-        d_out[ind] = d_in[ind];
+        d_out[newind] = d_in[row*length + col - padLength];
 
     return;
 }
@@ -1044,15 +1044,15 @@ int main()
     comp_decomp(Xc, uc, batch, u, mapLength, k, width, compression, decompression);
 
     vec_vec_mult(sRaw, compression, sRaw, width, batch);
-
-    
+ 
     transpose(sRaw, width, batch);
 
     fft(sRaw, batch, width, CUFFT_FORWARD);
 
     pad(sRaw, padded_data, batch, width, batch/2, mapLength - batch);
     //transpose(sRaw, batch, width);
-    //transpose(padded_data, mapLength, width);
+    transpose(padded_data, mapLength, width);
+    sca_vec_mult(m/mc, padded_data, width, mapLength);
     //fft(padded_data, width, mapLength, CUFFT_INVERSE);
     //vec_vec_mult(padded_data, decompression, padded_data, width, mapLength);
 
@@ -1062,11 +1062,11 @@ int main()
 
     // Two-D Matched Fitler
 
-    for(int x = 0; x < batch; x++)
+    for(int x = 0; x < mapLength; x++)
     {
         for(int y = 0; y < width; y++)
         {
-            curr = sRaw[x*width + y];
+            curr = padded_data[x*width + y];
             printf("%g + (%gi), ", cuCrealf(curr), cuCimagf(curr));
         }
         cout << endl;
