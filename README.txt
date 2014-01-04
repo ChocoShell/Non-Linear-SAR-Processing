@@ -9,19 +9,26 @@
     - fftshift2 - Shift rows and columns                            | Done
     - Array-Vector By element Multiplier needs to be tested         | Done
     - Constant-Vector Multiplier                                    | Done
-    - Cuda math functions                                           | 
     - Vector-Vector to Matrix Multiplication for two arrays         | Done
-    - Sinc function for spatial interpolate                         | 
-    - Import variables from matlab data: u, uc, k, kx               |
+    - Import variables from Matlab data: u, uc, k, kx               | Done
     - Matrix Transpose                                              | Done
-    - Test Compression and Decompression                            |
+    - CUDA Math functions(e.g., Complex exp)                        | Done
+    - Matrix Padding function                                       |
+    - Test Compression and Decompression                            | 50%
+    - sinc function for spatial interpolate                         |
 
 5. Matlab Blocks
-   - Fast-time filter & Digital Spotlight                           | 75%
+   - Fast-time filter & Digital Spotlight                           | 90%
    - Two-D Matched Filter Block                                     | 50%
    - To Display Block                                               | 33%
-   - Spatial Interpolate                                            | 
+   - Spatial Interpolate                                            |
     
-6. Outline differences between Matlab code and paper                |
-7. List differences:
-    -
+--------------------------------------------------------------------
+Approximate time to finish CUDA code of Matlab model - 2 days
+    
+6. Outline differences between Matlab code and paper - 1 day        |
+    - List differences
+
+8. CUDA code for paper - 1-3 days depending on how much needs to be changed
+    -   
+    

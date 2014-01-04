@@ -855,6 +855,47 @@ void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u,
     return;
 }
 
+void fft(cuComplex *h_matrix, const unsigned int length, const unsigned int width)
+{   // One dimensional fft along length
+    cuComplex *d_matrix;
+    cufftHandle plan;
+
+    cudaMalloc((void**)&d_matrix, sizeof(cuComplex)*length*width);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate data\n");
+		return;
+	}
+
+    cudaMemcpy(d_matrix, h_matrix, sizeof(cuComplex)*length*width,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    cufftPlan1d(&plan, length, CUFFT_C2C, width);
+    cufftExecC2C(plan, d_matrix, d_matrix, CUFFT_FORWARD);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: cufft failed\n");
+		return;
+	}
+
+    cudaMemcpy(h_matrix, d_matrix, sizeof(cuComplex)*length*width,
+               cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
+		return;
+	}
+
+    cufftDestroy(plan);
+    cudaFree(d_matrix);
+    return;
+}
+
 int main()
 {
 	//new code
@@ -938,52 +979,7 @@ int main()
 
     transpose(sRaw, width, batch);
 
-    cudaMalloc((void**)&d_sRaw, sizeof(cuComplex)*width*batch);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate data\n");
-		return;
-	}
-
-    cudaMemcpy(d_sRaw, sRaw, sizeof(cuComplex)*width*batch,
-               cudaMemcpyHostToDevice);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
-		return;
-	}
-
-    cudaMalloc((void**)&d_signal, sizeof(cuComplex)*width);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate data\n");
-		return;
-	}
-
-    cudaMemcpy(d_signal, signal, sizeof(cuComplex)*width,
-               cudaMemcpyHostToDevice);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to device for signal\n");
-		return;
-	}
-
-    cufftPlan1d(&plan, width, CUFFT_C2C, batch);
-    cufftExecC2C(plan, d_sRaw, d_sRaw, CUFFT_FORWARD);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: cufft failed\n");
-		return;
-	}
-
-    cudaMemcpy(sRaw, d_sRaw, sizeof(cuComplex)*width*batch,
-               cudaMemcpyDeviceToHost);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
-		return;
-	}
-    cufftDestroy(plan);
+    fft(sRaw, width, batch);
     
     fftshift(sRaw, width, batch, 2);
 
@@ -1000,6 +996,21 @@ int main()
 
     vec_vec_mult(sRaw, compression, sRaw, width, batch);
 
+    fft(sRaw, width, batch);
+
+    //transpose(sRaw, batch, width);
+    //pad(sRaw, padded_data, batch, width, batch/2, mapLength - batch);
+    //transpose(sRaw, width, batch);
+    //transpose(padded_data, width, mapLength);
+    //ifft(padded_data, width, mapLength);
+    //vec_vec_mult(padded_data, decompression, width, mapLength);
+
+    //fft(padded_data, width, mapLength);
+
+    //fftshift(padded_data, widthm map_length, 2);
+
+    // Two-D Matched Fitler
+
     for(int x = 0; x < batch; x++)
     {
         for(int y = 0; y < width; y++)
@@ -1010,8 +1021,6 @@ int main()
         cout << endl;
     }
 
-    cudaFree(d_sRaw);
-    cudaFree(d_signal);
     free(u);
     free(k);
     free(uc);
