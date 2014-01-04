@@ -130,7 +130,7 @@ __global__ void sqrt_abs_kernel(cuComplex *d_in, cuComplex *d_out, const unsigne
 
     if (row >= length || col >= width) {return;}
 
-    d_out[width*row + col].x = rsqrtf(cuCabsf(d_in[width*row + col]));
+    d_out[width*row + col].x = sqrtf(cuCabsf(d_in[width*row + col]));
     d_out[width*row + col].y = 0;
 }
 __global__ void exp_mat_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned int length, const unsigned int width)
@@ -323,9 +323,9 @@ void square(cuComplex *h_vector, cuComplex *h_out, const unsigned int length, co
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/threadsPerBlock.y + 1);
 
-    square_kernel<<<numOfBlocks, threadsPerBlock>>>(d_vector, d_vector, length, width);
+    square_kernel<<<numOfBlocks, threadsPerBlock>>>(d_vector, d_out, length, width);
 
-    cudaMemcpy(h_vector, d_out, sizeof(cuComplex)*width*length,
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
                cudaMemcpyDeviceToHost);
     if (cudaGetLastError() != cudaSuccess)
 	{
@@ -851,6 +851,7 @@ void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u,
     // exp mat
     exp_mat(compression, compression, width, length);
     exp_mat(decompression, decompression, u_len, length);
+    return;
 }
 
 int main()
@@ -1000,7 +1001,7 @@ int main()
     {
         for(int y = 0; y < width; y++)
         {
-            curr = compression[x* width + y];
+            curr = compression[x*width + y];
             printf("%g + (%gi), ", cuCrealf(curr), cuCimagf(curr));
         }
         cout << endl;
@@ -1008,8 +1009,14 @@ int main()
 
     cudaFree(d_sRaw);
     cudaFree(d_signal);
+    free(u);
+    free(k);
+    free(uc);
+    free(ku0);
     free(sRaw);
     free(signal);
     free(out_signal);
+    free(compression);
+    free(decompression);
 	return 0;
 }
