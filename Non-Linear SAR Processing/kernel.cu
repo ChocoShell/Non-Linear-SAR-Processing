@@ -222,16 +222,10 @@ __global__ void transpose_kernel(cuComplex *d_matrix, cuComplex *d_out, const un
     
     int newRow;
 
-    if (row*BLOCK_SIZE >= length || col >= width) {return;}
+    if (row >= length || col >= width) {return;}
 
-    for (int i = 0; i < BLOCK_SIZE; i++)
-    {
-        newRow = (BLOCK_SIZE*row) + i;
-        if(newRow < length)
-        {
-            d_out[length*col + newRow] = d_matrix[col + width*newRow];
-        }
-    }
+    d_out[length*col + row] = d_matrix[col + width*row];
+        
     return;
 }
 __global__ void fftshift_kernel(cuComplex *d_signal, cuComplex *d_out, const unsigned int width, const unsigned int batch, const int dim)
@@ -291,6 +285,23 @@ __global__ void mat_vec_mult_kernel(cuComplex *matrix, cuComplex *vector, cuComp
     if (row >= batch || col >= width) {return;}
 
     out[row*width + col] = cuCmulf(matrix[row*width + col], vector[col]);
+}
+__global__ void pad_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned int length, const unsigned int width, const unsigned int padInd, const unsigned int padLength)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (row >= width || col >= (padLength+length)) {return;}
+    int ind = row*length + col;
+
+    if (col < padInd)
+        d_out[ind] = d_in[ind];
+    else if (col < padLength + padInd)
+        d_out[ind] = make_cuComplex(0,0);
+    else 
+        d_out[ind] = d_in[ind];
+
+    return;
 }
 
 // kernel helpers
@@ -679,7 +690,7 @@ void transpose(cuComplex *h_matrix, const unsigned int width, const unsigned int
 	}
 
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 numOfBlocks(width/(threadsPerBlock.x + BLOCK_SIZE) + 1, batch/threadsPerBlock.y + 1);
+    dim3 numOfBlocks(width/threadsPerBlock.x + 1, batch/threadsPerBlock.y + 1);
 
     transpose_kernel<<<numOfBlocks, threadsPerBlock>>>(d_matrix, d_out, width, batch);
 
@@ -817,6 +828,45 @@ void mat_vec_mult(cuComplex *h_matrix, cuComplex *h_vector, cuComplex *h_out, co
     cudaFree(d_matrix);
     cudaFree(d_vector);
 }
+void pad(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const unsigned int width, const unsigned int padInd, const unsigned int padLength)
+{//(sRaw, padded_data, batch, width, batch/2, mapLength - batch);
+    
+    cuComplex *d_in, *d_out;
+    int newLength = padLength+length;
+
+    cudaMalloc((void**)&d_in, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*newLength);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(newLength/threadsPerBlock.x + 1, width/threadsPerBlock.y + 1);
+
+    pad_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width, padInd, padLength);
+
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*newLength, cudaMemcpyDeviceToHost);
+
+    cudaFree(d_out);
+    cudaFree(d_in);
+    return;
+}
 
 // Produces Compression Constants
 void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u, const int u_len, cuComplex *k, const int width, cuComplex *compression, cuComplex *decompression)
@@ -855,7 +905,7 @@ void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u,
     return;
 }
 
-void fft(cuComplex *h_matrix, const unsigned int length, const unsigned int width)
+void fft(cuComplex *h_matrix, const unsigned int length, const unsigned int width, int direction)
 {   // One dimensional fft along length
     cuComplex *d_matrix;
     cufftHandle plan;
@@ -876,7 +926,7 @@ void fft(cuComplex *h_matrix, const unsigned int length, const unsigned int widt
 	}
 
     cufftPlan1d(&plan, length, CUFFT_C2C, width);
-    cufftExecC2C(plan, d_matrix, d_matrix, CUFFT_FORWARD);
+    cufftExecC2C(plan, d_matrix, d_matrix, direction);
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: cufft failed\n");
@@ -922,7 +972,7 @@ int main()
     int mapLength = 382;
     int mapWidth  = 266;
 
-	cuComplex curr, *sRaw, *d_sRaw, *signal, *d_signal, *sM, *mapOut, *out_signal, *u, *uc, *k, *ku0;
+	cuComplex curr, *sRaw, *d_sRaw, *signal, *d_signal, *sM, *mapOut, *out_signal, *u, *uc, *k, *ku0, *padded_data;
     cufftHandle plan;
 	
 	u  = (cuComplex *)malloc(sizeof(cuComplex)*mapLength);
@@ -932,7 +982,8 @@ int main()
     signal = (cuComplex *)malloc(sizeof(cuComplex)*width);
 	sRaw   = (cuComplex *)malloc(sizeof(cuComplex)*width*batch);
     out_signal = (cuComplex *)malloc(sizeof(cuComplex)*width*batch);
-    
+    padded_data = (cuComplex *)malloc(sizeof(cuComplex)*width*mapLength);
+
     csv_real_reader("u.csv",   u, true, true);
     csv_real_reader("uc.csv", uc, true, true);
     csv_real_reader("k.csv",   k, true, true);
@@ -979,7 +1030,7 @@ int main()
 
     transpose(sRaw, width, batch);
 
-    fft(sRaw, width, batch);
+    fft(sRaw, width, batch, CUFFT_FORWARD);
     
     fftshift(sRaw, width, batch, 2);
 
@@ -996,14 +1047,14 @@ int main()
 
     vec_vec_mult(sRaw, compression, sRaw, width, batch);
 
-    fft(sRaw, width, batch);
+    fft(sRaw, width, batch, CUFFT_FORWARD);
 
-    //transpose(sRaw, batch, width);
-    //pad(sRaw, padded_data, batch, width, batch/2, mapLength - batch);
     //transpose(sRaw, width, batch);
+    //pad(sRaw, padded_data, batch, width, batch/2, mapLength - batch);
+    //transpose(sRaw, batch, width);
     //transpose(padded_data, width, mapLength);
-    //ifft(padded_data, width, mapLength);
-    //vec_vec_mult(padded_data, decompression, width, mapLength);
+    //fft(padded_data, width, mapLength, CUFFT_INVERSE);
+    //vec_vec_mult(padded_data, decompression, padded_data, width, mapLength);
 
     //fft(padded_data, width, mapLength);
 
@@ -1028,6 +1079,7 @@ int main()
     free(sRaw);
     free(signal);
     free(out_signal);
+    free(padded_data);
     free(compression);
     free(decompression);
 	return 0;
