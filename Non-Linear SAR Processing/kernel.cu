@@ -958,8 +958,8 @@ int main()
     int x,y;
     
     float Xc = 1000.0;
-    float m;
-    float mc;
+    float m = 382;
+    float mc = 160;
     int nInterpSidelobes;
 
     //Dimensions of sRaw data
