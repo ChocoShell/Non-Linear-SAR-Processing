@@ -219,12 +219,10 @@ __global__ void transpose_kernel(cuComplex *d_matrix, cuComplex *d_out, const un
 {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
-    
-    int newRow;
 
-    if (row >= length || col >= width) {return;}
+    if (row >= width || col >= length) {return;}
 
-    d_out[length*col + row] = d_matrix[col + width*row];
+    d_out[width*col + row] = d_matrix[length*row + col];
         
     return;
 }
@@ -1028,7 +1026,7 @@ int main()
 
 	//convolveWithCuda(sRaw, signal, sM, width, batch);
 
-    transpose(sRaw, width, batch);
+    transpose(sRaw, batch, width);
 
     fft(sRaw, width, batch, CUFFT_FORWARD);
     
@@ -1047,12 +1045,14 @@ int main()
 
     vec_vec_mult(sRaw, compression, sRaw, width, batch);
 
-    fft(sRaw, width, batch, CUFFT_FORWARD);
+    
+    transpose(sRaw, width, batch);
 
-    //transpose(sRaw, width, batch);
-    //pad(sRaw, padded_data, batch, width, batch/2, mapLength - batch);
+    fft(sRaw, batch, width, CUFFT_FORWARD);
+
+    pad(sRaw, padded_data, batch, width, batch/2, mapLength - batch);
     //transpose(sRaw, batch, width);
-    //transpose(padded_data, width, mapLength);
+    //transpose(padded_data, mapLength, width);
     //fft(padded_data, width, mapLength, CUFFT_INVERSE);
     //vec_vec_mult(padded_data, decompression, padded_data, width, mapLength);
 
