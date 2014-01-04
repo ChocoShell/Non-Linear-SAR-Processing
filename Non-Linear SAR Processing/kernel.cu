@@ -74,6 +74,44 @@ void split_line(string& line, string delim, list<string>& values)
     }
 }
 
+void csv_real_reader(string filename, cuComplex *signal, boolean isReal, boolean zero)
+{
+    float d;
+    int count = 0;
+    ifstream csv (filename);
+    
+    //Copying Data from CSV files into memory
+    string value;
+    list<string> values;
+    while ( csv.good() )
+    {
+        // read a string until next comma: http://www.cplusplus.com/reference/string/getline/
+        getline ( csv, value, ',' ); 
+        if (value.find('\n') != string::npos)
+            split_line(value, "\n", values);
+        else
+            values.push_back(value);
+    }
+
+    list<string>::const_iterator it = values.begin();
+    for (it = values.begin(); it != values.end(); it++) {
+        string tmp = *it;
+        d = stof(tmp.c_str(), NULL);
+        if (isReal) {
+		    signal[count].x = d;
+            if (zero) {
+                signal[count].y = 0;
+            }
+        } else {
+            signal[count].y = d;
+            if (zero) {
+                signal[count].x = 0;
+            }
+        }
+		count++;
+    }
+}
+
 //kernel functions
 __global__ void square_kernel(cuComplex *d_vector, cuComplex *d_out, const unsigned int length, const unsigned int width)
 {
@@ -823,16 +861,15 @@ int main()
 
 	// Get all data
 	ifstream fastTimeFilter ("fastTimeFilter.csv");
-	ifstream imagsRaw ("imagsRaw.csv");
-	ifstream realsRaw ("realsRaw.csv");
 	// End of data read
 
 	float d, i;
     int x,y;
     
     float Xc = 1000.0;
-    // Make uc linspace(-100.0, 98.75, 160);
-    // export u
+    float m;
+    float mc;
+    int nInterpSidelobes;
 
     //Dimensions of sRaw data
     int width = 438;
@@ -842,18 +879,27 @@ int main()
     int mapLength = 382;
     int mapWidth  = 266;
 
-	cuComplex curr, *sRaw, *d_sRaw, *signal, *d_signal, *sM, *mapOut, *out_signal;
+	cuComplex curr, *sRaw, *d_sRaw, *signal, *d_signal, *sM, *mapOut, *out_signal, *u, *uc, *k, *ku0;
     cufftHandle plan;
 	
-	signal = (cuComplex *)malloc(sizeof(cuComplex)*width);
+	u  = (cuComplex *)malloc(sizeof(cuComplex)*mapLength);
+    uc = (cuComplex *)malloc(sizeof(cuComplex)*batch);
+    k  = (cuComplex *)malloc(sizeof(cuComplex)*width);
+    ku0 = (cuComplex *)malloc(sizeof(cuComplex)*mapLength);
+    signal = (cuComplex *)malloc(sizeof(cuComplex)*width);
 	sRaw   = (cuComplex *)malloc(sizeof(cuComplex)*width*batch);
     out_signal = (cuComplex *)malloc(sizeof(cuComplex)*width*batch);
     
+    csv_real_reader("u.csv",   u, true, true);
+    csv_real_reader("uc.csv", uc, true, true);
+    csv_real_reader("k.csv",   k, true, true);
+    csv_real_reader("ku0.csv", ku0, true, true);
+    csv_real_reader("imagsRaw.csv", sRaw, false, false);
+    csv_real_reader("realsRaw.csv", sRaw, true, false);
+
     //Copying Data from CSV files into memory
     string value;
     list<string> values;
-    int count = width - 1;
-
     while ( fastTimeFilter.good() )
     {
         // read a string until next comma: http://www.cplusplus.com/reference/string/getline/
@@ -866,6 +912,7 @@ int main()
     }
     //From fast time filter we get p*(-t)
     list<string>::const_iterator it = values.begin();
+    int count = 0;
     for (it = values.begin(); it != values.end(); it++) {
         string tmp = *it;
         d = stof(tmp.c_str(), NULL);
@@ -873,54 +920,11 @@ int main()
 		tmp = *it;
 		i = stof(tmp.c_str(), NULL);
 		signal[count].x = d;
-		signal[count].y = -1 * i;
-		count--;
-        //cout << "Double val: " << right << showpoint << d << endl;
-    }
-	
-	string value1;
-    list<string> values1;
-    while ( imagsRaw.good() )
-    {
-        getline ( imagsRaw, value1, ',' ); // read a string until next comma: http://www.cplusplus.com/reference/string/getline/
-        if (value1.find('\n') != string::npos) {
-            split_line(value1, "\n", values1);
-        } else {
-            values1.push_back(value1);
-        }
-    }
-
-    it = values1.begin();
-    count = 0;
-    for (it = values1.begin(); it != values1.end(); it++) {
-        string tmp = *it;
-        d = stof(tmp.c_str(), NULL);
-        sRaw[count].y = d;
-        count++;
-        //cout << "Double val: " << right << showpoint << d << endl;
-    }
-
-    string value2;
-    list<string> values2;
-    while ( realsRaw.good() )
-    {
-        getline ( realsRaw, value2, ',' ); // read a string until next comma: http://www.cplusplus.com/reference/string/getline/
-        if (value2.find('\n') != string::npos) {
-            split_line(value2, "\n", values2);
-        } else {
-            values2.push_back(value2);
-        }
-    }
-
-    it = values2.begin();
-    count = 0;
-    for (it = values2.begin(); it != values2.end(); it++) {
-        string tmp = *it;
-        d = stof(tmp.c_str(), NULL);
-		sRaw[count].x = d;
+		signal[count].y = i;
 		count++;
         //cout << "Double val: " << right << showpoint << d << endl;
     }
+	
 	//Done Reading in values from files.
 
     //---------------------------------------------------------------------------------------------------------------------
@@ -990,14 +994,13 @@ int main()
     compression = (cuComplex *)malloc(sizeof(cuComplex)*batch*width);
     decompression = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*width);
 
-    //comp_decomp(Xc, uc, batch, u, mapLength, k, width, compression, decompression);
-    //GET UC, U, K
+    comp_decomp(Xc, uc, batch, u, mapLength, k, width, compression, decompression);
 
     for(int x = 0; x < batch; x++)
     {
         for(int y = 0; y < width; y++)
         {
-            curr = sRaw[x* width + y];
+            curr = compression[x* width + y];
             printf("%g + (%gi), ", cuCrealf(curr), cuCimagf(curr));
         }
         cout << endl;
