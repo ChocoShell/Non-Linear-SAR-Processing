@@ -56,8 +56,6 @@ using namespace std;
 
 #define BLOCK_SIZE 32
 
-const long int spd_of_light = 299792458;
-
 void split_line(string& line, string delim, list<string>& values)
 {
     size_t pos = 0;
@@ -138,7 +136,6 @@ __global__ void exp_mat_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned
 
     if (row >= length || col >= width) {return;}
 
-    cuComplex res;
     float s, c;
     float e = expf(d_in[width*row + col].x);
     sincosf(d_in[width*row + col].y, &s, &c);
@@ -705,7 +702,7 @@ void sca_vec_mult(const double K, cuComplex *h_vector, const unsigned int length
 }
 void transpose(cuComplex *h_matrix, const unsigned int width, const unsigned int batch)
 {
-    cuComplex *d_matrix, *d_out, curr;
+    cuComplex *d_matrix, *d_out;
 
     cudaMalloc((void**)&d_matrix, sizeof(cuComplex)*width*batch);
     if (cudaGetLastError() != cudaSuccess)
@@ -749,7 +746,7 @@ void transpose(cuComplex *h_matrix, const unsigned int width, const unsigned int
 }
 void fftshift(cuComplex *h_signal, cuComplex *h_out, const unsigned int width, const unsigned int batch, const int dim)
 {
-    cuComplex *d_signal, *d_out, curr;
+    cuComplex *d_signal, *d_out;
 
     cudaMalloc((void**)&d_signal, sizeof(cuComplex)*width*batch);
     if (cudaGetLastError() != cudaSuccess)
@@ -962,7 +959,7 @@ void vec_vec_add(cuComplex *h_mat1, cuComplex *h_mat2, cuComplex *h_out, const u
 		return;
 	}
 
-    cudaMalloc((void**)&d_mat1, sizeof(cuComplex)*length*width);
+    cudaMalloc((void**)&d_mat2, sizeof(cuComplex)*length*width);
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
@@ -976,14 +973,14 @@ void vec_vec_add(cuComplex *h_mat1, cuComplex *h_mat2, cuComplex *h_out, const u
 		return;
 	}
     
-    cudaMemcpy(d_mat1, h_mat1, sizeof(cuComplex)*length, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_mat1, h_mat1, sizeof(cuComplex)*length*width, cudaMemcpyHostToDevice);
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
 		return;
 	}
 
-    cudaMemcpy(d_mat2, h_mat2, sizeof(cuComplex)*length, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_mat2, h_mat2, sizeof(cuComplex)*length*width, cudaMemcpyHostToDevice);
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -993,7 +990,7 @@ void vec_vec_add(cuComplex *h_mat1, cuComplex *h_mat2, cuComplex *h_out, const u
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(length/threadsPerBlock.x + 1, width/threadsPerBlock.y + 1);
     
-    vec_vec_add_kernel<<<numOfBLocks, threadsPerBlock>>>(d_mat1, d_mat2, d_out, length, width);
+    vec_vec_add_kernel<<<numOfBlocks, threadsPerBlock>>>(d_mat1, d_mat2, d_out, length, width);
 
     cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
     if (cudaGetLastError() != cudaSuccess)
@@ -1032,7 +1029,7 @@ void sca_max(float K, cuComplex *h_in, cuComplex *h_out, const unsigned int leng
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(length/threadsPerBlock.x + 1, width/threadsPerBlock.y + 1);
     
-    sca_max_kernel<<<numOfBLocks, threadsPerBlock>>>(K, d_in, d_out, length, width);
+    sca_max_kernel<<<numOfBlocks, threadsPerBlock>>>(K, d_in, d_out, length, width);
 
     cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
     if (cudaGetLastError() != cudaSuccess)
@@ -1049,7 +1046,7 @@ void sca_max(float K, cuComplex *h_in, cuComplex *h_out, const unsigned int leng
 // Produces Compression Constants
 void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u, const int u_len, cuComplex *k, const int width, cuComplex *compression, cuComplex *decompression)
 {
-    cuComplex *f_uc, *f_u, *f_k, *f_ku0;
+    cuComplex *f_uc, *f_u, *f_k;
 
     f_u  = (cuComplex *)malloc(sizeof(cuComplex)*u_len);
     f_uc = (cuComplex *)malloc(sizeof(cuComplex)*length);
@@ -1146,7 +1143,6 @@ int main()
 	// End of data read
 
 	float d, i;
-    int x,y;
     
     float Xc = 1000.0;
     float m = 382;
@@ -1161,8 +1157,7 @@ int main()
     int mapLength = 382;
     int mapWidth  = 266;
 
-	cuComplex curr, *sRaw, *d_sRaw, *signal, *d_signal, *sM, *mapOut, *out_signal, *u, *uc, *k, *ku0, *padded_data;
-    cufftHandle plan;
+	cuComplex curr, *sRaw, *signal, *mapOut, *out_signal, *u, *uc, *k, *ku0, *padded_data;
 	
 	u  = (cuComplex *)malloc(sizeof(cuComplex)*mapLength);
     uc = (cuComplex *)malloc(sizeof(cuComplex)*batch);
@@ -1275,7 +1270,10 @@ int main()
     transpose(ku0mat, mapLength, width);
 
     vec_vec_add(kmat, ku0mat, kmat, width, mapLength);
-    sca_max(0, kmat, width, mapLength);
+    //sca_max(0, kmat, kmat, width, mapLength);
+
+    //sqrt_abs(kmat, kmat, width, mapLength);
+
     // 1. create function to copy vector into a matrix
     // square
     // square
@@ -1287,7 +1285,7 @@ int main()
     {
         for(int y = 0; y < width; y++)
         {
-            curr = padded_data[x*width + y];
+            curr = kmat[x*width + y];
             printf("%g + (%gi), ", cuCrealf(curr), cuCimagf(curr));
         }
         cout << endl;
@@ -1295,8 +1293,10 @@ int main()
 
     free(u);
     free(k);
+    free(kmat);
     free(uc);
     free(ku0);
+    free(ku0mat);
     free(sRaw);
     free(signal);
     free(out_signal);
