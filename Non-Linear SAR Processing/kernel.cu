@@ -1259,21 +1259,28 @@ int main()
     sca_vec_mult(4.0, k, width, 1);
     sca_vec_mult(-1.0, ku0, mapLength, 1);
     
-    cuComplex *kmat, *ku0mat;
+    cuComplex *kmat, *ku0mat, *kx, *kx_gt_zero;
 
     kmat = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*width);
     ku0mat = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*width);
-
+    kx     = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*width);
     vec_copy2mat(k, kmat, width, mapLength);
     vec_copy2mat(ku0, ku0mat, mapLength, width);
 
     transpose(ku0mat, mapLength, width);
 
-    vec_vec_add(kmat, ku0mat, kmat, width, mapLength);
-    //sca_max(0, kmat, kmat, width, mapLength);
+    vec_vec_add(kmat, ku0mat, kx, width, mapLength);
+    sca_max(0, kx, kx, width, mapLength);
 
-    //sqrt_abs(kmat, kmat, width, mapLength);
+    sqrt_abs(kx, kx, width, mapLength);
+    //fill kx_bool_zero
+    sqrt_abs(kmat, kmat, width, mapLength);
 
+    sca_vec_mult(-1.0, kmat, width, mapLength);
+
+    vec_vec_add(kx, kmat, kx, width, mapLength)
+
+    
     // 1. create function to copy vector into a matrix
     // square
     // square
