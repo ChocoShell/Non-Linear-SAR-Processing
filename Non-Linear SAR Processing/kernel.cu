@@ -1278,9 +1278,37 @@ int main()
 
     sca_vec_mult(-1.0, kmat, width, mapLength);
 
-    vec_vec_add(kx, kmat, kx, width, mapLength)
-
+    vec_vec_add(kx, kmat, kx, width, mapLength);
     
+    sca_vec_mult(Xc, kx, width, mapLength);
+
+    csv_real_reader("ku0.csv", ku0, true, true);
+
+    fftshift(ku0, ku0, mapLength, 1, 0);
+
+    vec_copy2mat(ku0, ku0mat, mapLength, width);
+
+    transpose(ku0mat, mapLength, width);
+    
+    vec_vec_add(kx, ku0mat, kx, width, mapLength);
+
+    sca_vec_add(0.25*3.141592, kx, width, mapLength, 1.0);
+
+    real_to_imag(kx, kx, width, mapLength);
+
+    exp_mat(kx, kx, width, mapLength);
+
+    vec_vec_mult(kx, padded_data, kx, width, mapLength);
+
+    fft(kx, width, mapLength, CUFFT_INVERSE);
+    transpose(kx, width, mapLength);
+    fft(kx, mapLength, width, CUFFT_INVERSE);
+    transpose(kx, mapLength, width);
+
+    sca_vec_mult(1.0/(width+mapLength), kx, width, mapLength);
+
+    fftshift(kx, kx, width, mapLength, 2);
+
     // 1. create function to copy vector into a matrix
     // square
     // square
@@ -1292,7 +1320,7 @@ int main()
     {
         for(int y = 0; y < width; y++)
         {
-            curr = kmat[x*width + y];
+            curr = kx[x*width + y];
             printf("%g + (%gi), ", cuCrealf(curr), cuCimagf(curr));
         }
         cout << endl;
