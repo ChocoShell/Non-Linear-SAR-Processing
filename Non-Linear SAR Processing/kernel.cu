@@ -56,8 +56,6 @@ using namespace std;
 
 #define BLOCK_SIZE 32
 
-#define PI 3.1415926535
-
 const long int spd_of_light = 299792458;
 
 void split_line(string& line, string delim, list<string>& values)
@@ -322,6 +320,27 @@ __global__ void vec_vec_add_kernel(cuComplex *d_mat1, cuComplex *d_mat2, cuCompl
     int ind = length*row + col;
 
     d_out[ind] = cuCaddf(d_mat1[ind], d_mat2[ind]);
+
+    return;
+}
+__global__ void sca_max_kernel(float K, cuComplex *d_in, cuComplex *d_out, const unsigned int length, const unsigned int width)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row >= width || col >= length) {return;}
+
+    int ind = length*row + col;
+
+    if (d_in[ind].x > K) 
+    { 
+        d_out[ind] = d_in[ind];
+    }
+    else 
+    {
+        d_out[ind].x = K;
+        d_out[ind].y = 0.0;
+    }
 
     return;
 }
@@ -987,7 +1006,44 @@ void vec_vec_add(cuComplex *h_mat1, cuComplex *h_mat2, cuComplex *h_out, const u
 }
 void sca_max(float K, cuComplex *h_in, cuComplex *h_out, const unsigned int length, const unsigned int width)
 {
+    cuComplex *d_in, *d_out;
 
+    cudaMalloc((void**)&d_in, sizeof(cuComplex)*length*width);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_out, sizeof(cuComplex)*length*width);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length*width, cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(length/threadsPerBlock.x + 1, width/threadsPerBlock.y + 1);
+    
+    sca_max_kernel<<<numOfBLocks, threadsPerBlock>>>(K, d_in, d_out, length, width);
+
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
+		return;
+	}
+
+    cudaFree(d_in);
+    cudaFree(d_out);
+    return;
 }
 
 // Produces Compression Constants
