@@ -301,7 +301,17 @@ __global__ void pad_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned int
 
     return;
 }
+__global__ void vec_copy2mat_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned int length, const unsigned int width)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
 
+    if (row >= width || col >= length) {return;}
+
+    d_out[length*row + col] = d_in[col];
+
+    return;
+}
 // kernel helpers
 void square(cuComplex *h_vector, cuComplex *h_out, const unsigned int length, const unsigned int width)
 {
@@ -704,7 +714,7 @@ void transpose(cuComplex *h_matrix, const unsigned int width, const unsigned int
 
     return;
 }
-void fftshift(cuComplex *h_signal, const unsigned int width, const unsigned int batch, const int dim)
+void fftshift(cuComplex *h_signal, cuComplex *h_out, const unsigned int width, const unsigned int batch, const int dim)
 {
     cuComplex *d_signal, *d_out, curr;
 
@@ -731,7 +741,7 @@ void fftshift(cuComplex *h_signal, const unsigned int width, const unsigned int 
 
     fftshift_kernel<<<numOfBlocks, threadsPerBlock>>>(d_signal, d_out, width, batch, dim);
 
-    cudaMemcpy(h_signal, d_out, sizeof(cuComplex)*width*batch,
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*batch,
                cudaMemcpyDeviceToHost);
 
     cudaFree(d_out);
@@ -865,41 +875,90 @@ void pad(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const uns
     cudaFree(d_in);
     return;
 }
+void vec_copy2mat(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const unsigned int width)
+{
+    //Copies input vector of certain length, over and over to fit in a length X width matrix
+    cuComplex *d_in, *d_out;
+    
+    cudaMalloc((void**)&d_in, sizeof(cuComplex)*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(length/threadsPerBlock.x + 1, width/threadsPerBlock.y + 1);
+
+    vec_copy2mat_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
+
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
+
+    cudaFree(d_out);
+    cudaFree(d_in);
+    return;
+}
 
 // Produces Compression Constants
 void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u, const int u_len, cuComplex *k, const int width, cuComplex *compression, cuComplex *decompression)
 {
-    // fftshift uc
-    fftshift(uc, length, 1, 0);
-    
+    cuComplex *f_uc, *f_u, *f_k, *f_ku0;
+
+    f_u  = (cuComplex *)malloc(sizeof(cuComplex)*u_len);
+    f_uc = (cuComplex *)malloc(sizeof(cuComplex)*length);
+    f_k  = (cuComplex *)malloc(sizeof(cuComplex)*width);
+
+    // fftshift
+    fftshift(uc, f_uc, length, 1, 0);
+    fftshift(u, f_u, u_len, 1, 0);
+
     // Square each element
-    square(uc, uc, length, 1);
-    square(u, u, u_len, 1);
+    square(f_uc, f_uc, length, 1);
+    square(f_u, f_u, u_len, 1);
 
     // add constant to vector
-    sca_vec_add(Xc*Xc, uc, length, 1, 1);
-    sca_vec_add(Xc*Xc, u, u_len, 1, 1);
+    sca_vec_add(Xc*Xc, f_uc, length, 1, 1);
+    sca_vec_add(Xc*Xc, f_u, u_len, 1, 1);
 
     // sqrt(abs complex vector)
-    sqrt_abs(uc, uc, length, 1);
-    sqrt_abs(u, u, u_len, 1);
+    sqrt_abs(f_uc, f_uc, length, 1);
+    sqrt_abs(f_u, f_u, u_len, 1);
 
     // subtract contant from vector
-    sca_vec_add(-1.0*Xc, uc, length, 1, 1.0);
+    sca_vec_add(-1.0*Xc, f_uc, length, 1, 1.0);
     // Xc - u
-    sca_vec_add(Xc, u, u_len, 1, -1.0);
+    sca_vec_add(Xc, f_u, u_len, 1, -1.0);
 
     // change real vector imaginary vector
-    real_to_imag(k, k, width, 1);
-    sca_vec_mult(2.0, k, width, 1);
+    real_to_imag(k, f_k, width, 1);
+    sca_vec_mult(2.0, f_k, width, 1);
 
     // mult vec vec to matrix
-    vec_vec_mat(uc, k, compression, length, width);
-    vec_vec_mat(k, u, decompression, width, u_len);
+    vec_vec_mat(f_uc, f_k, compression, length, width);
+    vec_vec_mat(f_k, f_u, decompression, width, u_len);
 
     // exp mat
     exp_mat(compression, compression, width, length);
     exp_mat(decompression, decompression, u_len, width);
+
+    free(f_u);
+    free(f_uc);
+    free(f_k);
     return;
 }
 
@@ -1030,9 +1089,9 @@ int main()
 
     fft(sRaw, width, batch, CUFFT_FORWARD);
     
-    fftshift(sRaw, width, batch, 2);
+    fftshift(sRaw, sRaw, width, batch, 2);
 
-    fftshift(signal, width, 1, 0);
+    fftshift(signal, signal, width, 1, 0);
 
     mat_vec_mult(sRaw, signal, sRaw, width, batch);
 
@@ -1059,11 +1118,23 @@ int main()
 
     fft(padded_data, mapLength, width, CUFFT_FORWARD);
 
-    fftshift(padded_data, mapLength, width, 2);
+    fftshift(padded_data, padded_data, mapLength, width, 2);
 
     transpose(padded_data, mapLength, width);
     // Two-D Matched Fitler
-
+    //kx = sqrt(max(single(0), 4*(k.').^2*ones(1,m)-(ones(n,1)*ku0).^2));
+    // if (x < 0) 0
+    // else 4*(k.').^2*ones(1,m)-(ones(n,1)*ku0).^2
+    
+    square(k, k, width, 1);
+    square(ku0, ku0, mapLength, 1);
+    // 1. create function to copy vector into a matrix
+    // square
+    // square
+    // sca_vec_mult
+    // vec_vec_sub
+    // max(0, x)
+    // sqrt
     for(int x = 0; x < mapLength; x++)
     {
         for(int y = 0; y < width; y++)
