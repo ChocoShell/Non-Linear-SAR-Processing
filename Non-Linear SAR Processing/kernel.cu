@@ -312,6 +312,20 @@ __global__ void vec_copy2mat_kernel(cuComplex *d_in, cuComplex *d_out, const uns
 
     return;
 }
+__global__ void vec_vec_add_kernel(cuComplex *d_mat1, cuComplex *d_mat2, cuComplex *d_out, const unsigned int length, const unsigned int width)
+{
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row >= width || col >= length) {return;}
+
+    int ind = length*row + col;
+
+    d_out[ind] = cuCaddf(d_mat1[ind], d_mat2[ind]);
+
+    return;
+}
+
 // kernel helpers
 void square(cuComplex *h_vector, cuComplex *h_out, const unsigned int length, const unsigned int width)
 {
@@ -908,10 +922,72 @@ void vec_copy2mat(cuComplex *h_in, cuComplex *h_out, const unsigned int length, 
     vec_copy2mat_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
 
     cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
+		return;
+	}
 
     cudaFree(d_out);
     cudaFree(d_in);
     return;
+}
+void vec_vec_add(cuComplex *h_mat1, cuComplex *h_mat2, cuComplex *h_out, const unsigned int length, const unsigned int width)
+{
+    cuComplex *d_mat1, *d_mat2, *d_out;
+
+    cudaMalloc((void**)&d_mat1, sizeof(cuComplex)*length*width);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_mat1, sizeof(cuComplex)*length*width);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+    
+    cudaMemcpy(d_mat1, h_mat1, sizeof(cuComplex)*length, cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    cudaMemcpy(d_mat2, h_mat2, sizeof(cuComplex)*length, cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(length/threadsPerBlock.x + 1, width/threadsPerBlock.y + 1);
+    
+    vec_vec_add_kernel<<<numOfBLocks, threadsPerBlock>>>(d_mat1, d_mat2, d_out, length, width);
+
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
+		return;
+	}
+
+    return;
+}
+void sca_max(float K, cuComplex *h_in, cuComplex *h_out, const unsigned int length, const unsigned int width)
+{
+
 }
 
 // Produces Compression Constants
@@ -1128,6 +1204,22 @@ int main()
     
     square(k, k, width, 1);
     square(ku0, ku0, mapLength, 1);
+
+    sca_vec_mult(4.0, k, width, 1);
+    sca_vec_mult(-1.0, ku0, mapLength, 1);
+    
+    cuComplex *kmat, *ku0mat;
+
+    kmat = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*width);
+    ku0mat = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*width);
+
+    vec_copy2mat(k, kmat, width, mapLength);
+    vec_copy2mat(ku0, ku0mat, mapLength, width);
+
+    transpose(ku0mat, mapLength, width);
+
+    vec_vec_add(kmat, ku0mat, kmat, width, mapLength);
+    sca_max(0, kmat, width, mapLength);
     // 1. create function to copy vector into a matrix
     // square
     // square
