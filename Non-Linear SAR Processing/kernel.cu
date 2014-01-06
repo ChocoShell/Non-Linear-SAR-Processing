@@ -1147,7 +1147,7 @@ void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u,
     return;
 }
 
-void fft(cuComplex *h_matrix, const unsigned int length, const unsigned int width, int direction)
+void fft(cuComplex *h_matrix, cuComplex *h_out, const unsigned int length, const unsigned int width, int direction)
 {   // One dimensional fft along length
     cuComplex *d_matrix;
     cufftHandle plan;
@@ -1175,7 +1175,7 @@ void fft(cuComplex *h_matrix, const unsigned int length, const unsigned int widt
 		return;
 	}
 
-    cudaMemcpy(h_matrix, d_matrix, sizeof(cuComplex)*length*width,
+    cudaMemcpy(h_out, d_matrix, sizeof(cuComplex)*length*width,
                cudaMemcpyDeviceToHost);
     if (cudaGetLastError() != cudaSuccess)
 	{
@@ -1186,6 +1186,71 @@ void fft(cuComplex *h_matrix, const unsigned int length, const unsigned int widt
     cufftDestroy(plan);
     cudaFree(d_matrix);
     return;
+}
+
+void fast_time_block(cuComplex *sRaw, cuComplex *fast_time_filter, const unsigned int length, const unsigned int width, 
+                     const unsigned int mapWidth, cuComplex *fsSpotLit)
+{
+    cuComplex *fast_time_filter_copy, *sRaw_copy, *compression, *decompression, *uc, *u, *k;
+    float Xc = 1000.0;
+
+    sRaw_copy = (cuComplex *)malloc(sizeof(cuComplex)*length*width);
+    fast_time_filter_copy = (cuComplex *)malloc(sizeof(cuComplex)*length);
+    
+
+    fft(sRaw, sRaw_copy, length, width, CUFFT_FORWARD);
+    fftshift(sRaw_copy, sRaw_copy, length, width, 2);
+
+    fftshift(fast_time_filter, fast_time_filter_copy, length, 1, 0);
+    mat_vec_mult(sRaw_copy, fast_time_filter_copy, sRaw_copy, length, width);
+
+    free(fast_time_filter_copy);
+    
+    uc = (cuComplex *)malloc(sizeof(cuComplex)*width);
+    k  = (cuComplex *)malloc(sizeof(cuComplex)*length);
+    u  = (cuComplex *)malloc(sizeof(cuComplex)*mapWidth);
+    compression = (cuComplex *)malloc(sizeof(cuComplex)*length*width);
+    decompression = (cuComplex *)malloc(sizeof(cuComplex)*length*mapWidth);
+    
+    csv_real_reader("u.csv",   u, true, true);
+    csv_real_reader("uc.csv", uc, true, true);
+    csv_real_reader("k.csv",   k, true, true);
+    comp_decomp(Xc, uc, width, u, mapWidth, k, length, compression, decompression);
+
+    free(u);
+    free(uc);
+
+    vec_vec_mult(sRaw_copy, compression, sRaw_copy, length, width);
+
+    free(compression);
+
+    transpose(sRaw_copy, length, width);
+
+    fft(sRaw_copy, sRaw_copy, width, length, CUFFT_FORWARD);
+
+    pad(sRaw_copy, fsSpotLit, width, length, width/2, mapWidth - width);
+
+    sca_vec_mult(382.0/160.0, fsSpotLit, mapWidth, length);
+
+    fft(fsSpotLit, fsSpotLit, mapWidth, length, CUFFT_INVERSE);
+    sca_vec_mult(1.0/mapWidth, fsSpotLit, mapWidth, length);
+
+    vec_vec_mult(fsSpotLit, decompression, fsSpotLit, mapWidth, length);
+
+    free(decompression);
+    
+    fft(fsSpotLit, fsSpotLit, mapWidth, length, CUFFT_FORWARD);
+
+    fftshift(fsSpotLit, fsSpotLit, mapWidth, length, 2);
+
+    transpose(fsSpotLit, mapWidth, length);
+
+    free(sRaw_copy);
+}
+
+void SpatialInterpolate(cuComplex *filteredSignal, cuComplex *kx, cuComplex *GridValues, float dkx, float kxs, cuComplex *outSignal, cuComplex *idxout)
+{
+
 }
 
 int main()
@@ -1213,7 +1278,7 @@ int main()
     int mapLength = 382;
     int mapWidth  = 266;
 
-	cuComplex curr, *sRaw, *signal, *mapOut, *out_signal, *u, *uc, *k, *ku0, *padded_data;
+	cuComplex curr, *sRaw, *signal, *mapOut, *out_signal, *u, *uc, *k, *ku0, *padded_data, *fsSpotLit;
 	
 	u  = (cuComplex *)malloc(sizeof(cuComplex)*mapLength);
     uc = (cuComplex *)malloc(sizeof(cuComplex)*batch);
@@ -1223,6 +1288,7 @@ int main()
 	sRaw   = (cuComplex *)malloc(sizeof(cuComplex)*width*batch);
     out_signal = (cuComplex *)malloc(sizeof(cuComplex)*width*batch);
     padded_data = (cuComplex *)malloc(sizeof(cuComplex)*width*mapLength);
+    fsSpotLit   = (cuComplex *)malloc(sizeof(cuComplex)*width*mapLength);
 
     csv_real_reader("u.csv",   u, true, true);
     csv_real_reader("uc.csv", uc, true, true);
@@ -1263,47 +1329,6 @@ int main()
 
     //---------------------------------------------------------------------------------------------------------------------
 
-    // Output for convolution
-    //sM = (cuComplex *)malloc(sizeof(cuComplex)*tots*batch);
-
-	//convolveWithCuda(sRaw, signal, sM, width, batch);
-
-    transpose(sRaw, batch, width);
-
-    fft(sRaw, width, batch, CUFFT_FORWARD);
-    
-    fftshift(sRaw, sRaw, width, batch, 2);
-
-    fftshift(signal, signal, width, 1, 0);
-
-    mat_vec_mult(sRaw, signal, sRaw, width, batch);
-
-    cuComplex *compression, *decompression;
-
-    compression = (cuComplex *)malloc(sizeof(cuComplex)*batch*width);
-    decompression = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*width);
-
-    comp_decomp(Xc, uc, batch, u, mapLength, k, width, compression, decompression);
-
-    vec_vec_mult(sRaw, compression, sRaw, width, batch);
- 
-    transpose(sRaw, width, batch);
-
-    fft(sRaw, batch, width, CUFFT_FORWARD);
-
-    pad(sRaw, padded_data, batch, width, batch/2, mapLength - batch);
-    //transpose(sRaw, batch, width);
-    sca_vec_mult(m/mc, padded_data, mapLength, width);
-    fft(padded_data, mapLength, width, CUFFT_INVERSE);
-    vec_vec_mult(padded_data, decompression, padded_data, mapLength, width);
-
-    sca_vec_mult(sqrt(2.0)/(mapLength*1.0), padded_data, mapLength, width);
-
-    fft(padded_data, mapLength, width, CUFFT_FORWARD);
-
-    fftshift(padded_data, padded_data, mapLength, width, 2);
-
-    transpose(padded_data, mapLength, width);
     // Two-D Matched Fitler
     
     square(k, k, width, 1);
@@ -1357,23 +1382,19 @@ int main()
 
     vec_vec_mult(kx, kx_gt_zero, kx, width, mapLength);
 
-    vec_vec_mult(kx, padded_data, kx, width, mapLength);
+    vec_vec_mult(kx, fsSpotLit, kx, width, mapLength);
 
-    fft(kx, width, mapLength, CUFFT_INVERSE);
+    fft(kx, kx, width, mapLength, CUFFT_INVERSE);
     transpose(kx, width, mapLength);
-    fft(kx, mapLength, width, CUFFT_INVERSE);
+    fft(kx, kx, mapLength, width, CUFFT_INVERSE);
     transpose(kx, mapLength, width);
 
-    sca_vec_mult(1.0/(width+mapLength), kx, width, mapLength);
-    sca_vec_mult(2.0/(width+mapLength), kx, width, mapLength);
+    sca_vec_mult(1.0/width, kx, width, mapLength);
+    sca_vec_mult(1.0/mapLength, kx, width, mapLength);
 
     // 1. create function to copy vector into a matrix
-    // square
-    // square
-    // sca_vec_mult
-    // vec_vec_sub
-    // max(0, x)
-    // sqrt
+    // Spatial Interpolate
+
     for(int x = 0; x < mapLength; x++)
     {
         for(int y = 0; y < width; y++)
@@ -1392,9 +1413,8 @@ int main()
     free(ku0mat);
     free(sRaw);
     free(signal);
+    free(fsSpotLit);
     free(out_signal);
     free(padded_data);
-    free(compression);
-    free(decompression);
 	return 0;
 }
