@@ -9,7 +9,7 @@
 #include <cassert>
 #include <cmath>
 
-#define checkCudaErrors(val) checkem( (val), #val, __FILE__, __LINE__)
+//#define checkCudaErrors(val) checkem( (val), #val, __FILE__, __LINE__)
 
 template<typename T>
 void checkem(T err, const char* const func, const char* const file, const int line) {

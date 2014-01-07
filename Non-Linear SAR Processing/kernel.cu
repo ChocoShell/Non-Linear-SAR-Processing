@@ -20,12 +20,6 @@ New Not Dumb Plan
 #include <cstdlib>
 #include <list>
 
-#ifdef _WIN32
-#  define WINDOWS_LEAN_AND_MEAN
-#  define NOMINMAX
-#  include <windows.h>
-#endif
-
 // OpenGL Graphics includes
 #include <GL/glew.h>
 #include <GL/freeglut.h>
@@ -73,7 +67,7 @@ void split_line(string& line, string delim, list<string>& values)
     }
 }
 
-void csv_real_reader(string filename, cuComplex *signal, boolean isReal, boolean zero)
+void csv_real_reader(string filename, cuComplex *signal, bool isReal, bool zero)
 {
     float d;
     int count = 0;
@@ -443,226 +437,111 @@ void square(cuComplex *h_vector, cuComplex *h_out, const unsigned int length, co
 {
     cuComplex *d_vector, *d_out;
 
-    cudaMalloc((void**)&d_vector, sizeof(cuComplex)*width*length);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
-		return;
-	}
+    checkCudaErrors(cudaMalloc((void**)&d_vector, sizeof(cuComplex)*width*length));
 
-    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
-		return;
-	}
-
-    cudaMemcpy(d_vector, h_vector, sizeof(cuComplex)*width*length,
-               cudaMemcpyHostToDevice);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
-		return;
-	}
+    checkCudaErrors(cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length));
+    
+    checkCudaErrors(cudaMemcpy(d_vector, h_vector, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice));
 
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/threadsPerBlock.y + 1);
 
     square_kernel<<<numOfBlocks, threadsPerBlock>>>(d_vector, d_out, length, width);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
-               cudaMemcpyDeviceToHost);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
-		return;
-	}
-
-    cudaFree(d_out);
-    cudaFree(d_vector);
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
+               cudaMemcpyDeviceToHost));
+    
+    checkCudaErrors(cudaFree(d_out));
+    checkCudaErrors(cudaFree(d_vector));
 }
 void sqrt_abs(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const unsigned int width)
 {
     cuComplex *d_in, *d_out;
 
-    cudaMalloc((void**)&d_in, sizeof(cuComplex)*width*length);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
-		return;
-	}
+    checkCudaErrors(cudaMalloc((void**)&d_in, sizeof(cuComplex)*width*length));
 
-    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
-		return;
-	}
+    checkCudaErrors(cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length));
 
-    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length,
-               cudaMemcpyHostToDevice);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
-		return;
-	}
+    checkCudaErrors(cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length, cudaMemcpyHostToDevice));
 
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/threadsPerBlock.y + 1);
 
     sqrt_abs_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
-               cudaMemcpyDeviceToHost);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
-		return;
-	}
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost));
 
-    cudaFree(d_in);
-    cudaFree(d_out);
+    checkCudaErrors(cudaFree(d_in));
+    checkCudaErrors(cudaFree(d_out));
 }
 void exp_mat(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const unsigned int width)
 {
     cuComplex *d_in, *d_out;
 
-    cudaMalloc((void**)&d_in, sizeof(cuComplex)*width*length);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
-		return;
-	}
-
-    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
-		return;
-	}
-
-    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length,
-               cudaMemcpyHostToDevice);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
-		return;
-	}
+    checkCudaErrors(cudaMalloc((void**)&d_in, sizeof(cuComplex)*width*length));
+    
+    checkCudaErrors(cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length));
+    
+    checkCudaErrors(cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice));
+    
 
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/threadsPerBlock.y + 1);
 
     exp_mat_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
-               cudaMemcpyDeviceToHost);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
-		return;
-	}
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost));
 
-    cudaFree(d_in);
-    cudaFree(d_out);
+    checkCudaErrors(cudaFree(d_in));
+    checkCudaErrors(cudaFree(d_out));
 }
 void real_to_imag(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const unsigned int width)
 {
     cuComplex *d_in, *d_out;
 
-    cudaMalloc((void**)&d_in, sizeof(cuComplex)*width*length);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
-		return;
-	}
+    checkCudaErrors(cudaMalloc((void**)&d_in, sizeof(cuComplex)*width*length));
 
-    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
-		return;
-	}
-
-    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length,
-               cudaMemcpyHostToDevice);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
-		return;
-	}
-
+    checkCudaErrors(cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length));
+    
+    checkCudaErrors(cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length, cudaMemcpyHostToDevice));
+    
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/threadsPerBlock.y + 1);
 
     real_to_imag_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
-               cudaMemcpyDeviceToHost);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
-		return;
-	}
-
-    cudaFree(d_in);
-    cudaFree(d_out);
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost));
+    
+    checkCudaErrors(cudaFree(d_in));
+    checkCudaErrors(cudaFree(d_out));
 }
 void vec_vec_mult(cuComplex *h_vec1, cuComplex *h_vec2, cuComplex *h_out, const unsigned int length, const unsigned int width)
 {
     //Element wise multiplication of 2 vectors, output is placed in h_vec1
     cuComplex *d_vec1, *d_vec2, *d_out;
 
-    cudaMalloc((void**)&d_vec1, sizeof(cuComplex)*width*length);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
-		return;
-	}
+    checkCudaErrors(cudaMalloc((void**)&d_vec1, sizeof(cuComplex)*width*length));
+    
+    checkCudaErrors(cudaMalloc((void**)&d_vec2, sizeof(cuComplex)*width*length));
 
-    cudaMalloc((void**)&d_vec2, sizeof(cuComplex)*width*length);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
-		return;
-	}
-
-    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
-		return;
-	}
+    checkCudaErrors(cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length));
 
     //Copying vectors onto device
-    cudaMemcpy(d_vec1, h_vec1, sizeof(cuComplex)*width*length,
-               cudaMemcpyHostToDevice);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
-		return;
-	}
-
-    cudaMemcpy(d_vec2, h_vec2, sizeof(cuComplex)*width*length,
-               cudaMemcpyHostToDevice);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
-		return;
-	}
-
+    checkCudaErrors(cudaMemcpy(d_vec1, h_vec1, sizeof(cuComplex)*width*length, cudaMemcpyHostToDevice));
+    
+    checkCudaErrors(cudaMemcpy(d_vec2, h_vec2, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice));
+    
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/(threadsPerBlock.y + BLOCK_SIZE) + 1);
 
     vec_vec_mult_kernel<<<numOfBlocks, threadsPerBlock>>>(d_vec1, d_vec2, d_out, length, width);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
-               cudaMemcpyDeviceToHost);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
-		return;
-	}
-
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length,
+               cudaMemcpyDeviceToHost));
+    
     cudaFree(d_vec1);
     cudaFree(d_vec2);
     cudaFree(d_out);
@@ -694,16 +573,16 @@ void vec_vec_mat(cuComplex *h_vec1, cuComplex *h_vec2, cuComplex *h_out, const u
 	}
 
     //Copying vectors onto device
-    cudaMemcpy(d_vec1, h_vec1, sizeof(cuComplex)*len_1,
-               cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_vec1, h_vec1, sizeof(cuComplex)*len_1,
+               cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
 		return;
 	}
 
-    cudaMemcpy(d_vec2, h_vec2, sizeof(cuComplex)*len_2,
-               cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_vec2, h_vec2, sizeof(cuComplex)*len_2,
+               cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -715,8 +594,8 @@ void vec_vec_mat(cuComplex *h_vec1, cuComplex *h_vec2, cuComplex *h_out, const u
 
     vec_vec_mat_kernel<<<numOfBlocks, threadsPerBlock>>>(d_vec1, d_vec2, d_out, len_1, len_2);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*len_2*len_1,
-               cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*len_2*len_1,
+               cudaMemcpyDeviceToHost));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -738,8 +617,8 @@ void sca_vec_add(const double K, cuComplex *h_vector, const unsigned length, con
 		return;
 	}
 
-    cudaMemcpy(d_vector, h_vector, sizeof(cuComplex)*width*length,
-               cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_vector, h_vector, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -751,8 +630,8 @@ void sca_vec_add(const double K, cuComplex *h_vector, const unsigned length, con
 
     sca_vec_add_kernel<<<numOfBlocks, threadsPerBlock>>>(K, d_vector, length, width, M);
 
-    cudaMemcpy(h_vector, d_vector, sizeof(cuComplex)*width*length,
-               cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_vector, d_vector, sizeof(cuComplex)*width*length,
+               cudaMemcpyDeviceToHost));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -773,27 +652,16 @@ void sca_vec_mult(const double K, cuComplex *h_vector, const unsigned int length
 	}
 
     //Copying vector onto device
-    cudaMemcpy(d_vector, h_vector, sizeof(cuComplex)*width*length,
-               cudaMemcpyHostToDevice);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
-		return;
-	}
-
+    checkCudaErrors(cudaMemcpy(d_vector, h_vector, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice));
+   
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(width/threadsPerBlock.x + 1, length/(threadsPerBlock.y + BLOCK_SIZE) + 1);
 
     sca_vec_mult_kernel<<<numOfBlocks, threadsPerBlock>>>(K, d_vector, length, width);
 
-    cudaMemcpy(h_vector, d_vector, sizeof(cuComplex)*width*length,
-               cudaMemcpyDeviceToHost);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
-		return;
-	}
-
+    checkCudaErrors(cudaMemcpy(h_vector, d_vector, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost));
+    
     cudaFree(d_vector);
 }
 void transpose(cuComplex *h_matrix, const unsigned int width, const unsigned int batch)
@@ -815,8 +683,8 @@ void transpose(cuComplex *h_matrix, const unsigned int width, const unsigned int
 	}
 
     //Copying matrix onto device
-    cudaMemcpy(d_matrix, h_matrix, sizeof(cuComplex)*width*batch,
-               cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_matrix, h_matrix, sizeof(cuComplex)*width*batch,
+               cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -828,15 +696,10 @@ void transpose(cuComplex *h_matrix, const unsigned int width, const unsigned int
 
     transpose_kernel<<<numOfBlocks, threadsPerBlock>>>(d_matrix, d_out, width, batch);
 
-    cudaMemcpy(h_matrix, d_out, sizeof(cuComplex)*width*batch, cudaMemcpyDeviceToHost);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to host failed\n");
-		return;
-	}
-
-    cudaFree(d_matrix);
-    cudaFree(d_out);
+    checkCudaErrors(cudaMemcpy(h_matrix, d_out, sizeof(cuComplex)*width*batch, cudaMemcpyDeviceToHost));
+    
+    checkCudaErrors(cudaFree(d_matrix));
+    checkCudaErrors(cudaFree(d_out));
 
     return;
 }
@@ -859,16 +722,16 @@ void fftshift(cuComplex *h_signal, cuComplex *h_out, const unsigned int width, c
 	}
 
     //Copying matrix onto device
-    cudaMemcpy(d_signal, h_signal, sizeof(cuComplex)*width*batch,
-               cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_signal, h_signal, sizeof(cuComplex)*width*batch,
+               cudaMemcpyHostToDevice));
 
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(width/threadsPerBlock.x + 1, batch/threadsPerBlock.y + 1);
 
     fftshift_kernel<<<numOfBlocks, threadsPerBlock>>>(d_signal, d_out, width, batch, dim);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*batch,
-               cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*batch,
+               cudaMemcpyDeviceToHost));
 
     cudaFree(d_out);
     cudaFree(d_signal);
@@ -896,14 +759,14 @@ void mapMaker(cuComplex *s_M, cuComplex *mapOut, const unsigned int width, const
     //Finished Allocation
 
     //Copying matrix onto device
-    cudaMemcpy(dS_M, s_M, sizeof(cuComplex)*width*batch, cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(dS_M, s_M, sizeof(cuComplex)*width*batch, cudaMemcpyHostToDevice));
 
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     dim3 numOfBlocks(mapLength/threadsPerBlock.x + 1, mapWidth/threadsPerBlock.y + 1);
 
     map_kernel<<<numOfBlocks, threadsPerBlock>>>(dS_M, dMapOut, width, batch, mapLength, mapWidth);
 
-    cudaMemcpy(mapOut, dMapOut, sizeof(cuComplex)*mapLength*mapWidth, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(mapOut, dMapOut, sizeof(cuComplex)*mapLength*mapWidth, cudaMemcpyDeviceToHost));
 
     //Printing map values to console.
     cudaFree(dS_M);
@@ -935,16 +798,16 @@ void mat_vec_mult(cuComplex *h_matrix, cuComplex *h_vector, cuComplex *h_out, co
 		return;
 	}
 
-    cudaMemcpy(d_matrix, h_matrix, sizeof(cuComplex)*width*batch,
-               cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_matrix, h_matrix, sizeof(cuComplex)*width*batch,
+               cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
 		return;
 	}
 
-    cudaMemcpy(d_vector, h_vector, sizeof(cuComplex)*width,
-               cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_vector, h_vector, sizeof(cuComplex)*width,
+               cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -956,7 +819,7 @@ void mat_vec_mult(cuComplex *h_matrix, cuComplex *h_vector, cuComplex *h_out, co
 
     mat_vec_mult_kernel<<<numOfBlocks, threadsPerBlock>>>(d_matrix, d_vector, d_out, width, batch);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*batch, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*batch, cudaMemcpyDeviceToHost));
 
     cudaFree(d_out);
     cudaFree(d_matrix);
@@ -982,8 +845,8 @@ void pad(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const uns
 		return;
 	}
 
-    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length,
-               cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_in, h_in, sizeof(cuComplex)*width*length,
+               cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -995,7 +858,7 @@ void pad(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const uns
 
     pad_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width, padInd, padLength);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*newLength, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*newLength, cudaMemcpyDeviceToHost));
 
     cudaFree(d_out);
     cudaFree(d_in);
@@ -1020,8 +883,8 @@ void vec_copy2mat(cuComplex *h_in, cuComplex *h_out, const unsigned int length, 
 		return;
 	}
 
-    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length,
-               cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length,
+               cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -1033,7 +896,7 @@ void vec_copy2mat(cuComplex *h_in, cuComplex *h_out, const unsigned int length, 
 
     vec_copy2mat_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
@@ -1069,14 +932,14 @@ void vec_vec_add(cuComplex *h_mat1, cuComplex *h_mat2, cuComplex *h_out, const u
 		return;
 	}
     
-    cudaMemcpy(d_mat1, h_mat1, sizeof(cuComplex)*length*width, cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_mat1, h_mat1, sizeof(cuComplex)*length*width, cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
 		return;
 	}
 
-    cudaMemcpy(d_mat2, h_mat2, sizeof(cuComplex)*length*width, cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_mat2, h_mat2, sizeof(cuComplex)*length*width, cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -1088,7 +951,7 @@ void vec_vec_add(cuComplex *h_mat1, cuComplex *h_mat2, cuComplex *h_out, const u
     
     vec_vec_add_kernel<<<numOfBlocks, threadsPerBlock>>>(d_mat1, d_mat2, d_out, length, width);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
@@ -1115,7 +978,7 @@ void sca_max(float K, cuComplex *h_in, cuComplex *h_out, const unsigned int leng
 		return;
 	}
 
-    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length*width, cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length*width, cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -1127,7 +990,7 @@ void sca_max(float K, cuComplex *h_in, cuComplex *h_out, const unsigned int leng
     
     sca_max_kernel<<<numOfBlocks, threadsPerBlock>>>(K, d_in, d_out, length, width);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
@@ -1156,8 +1019,8 @@ void is_pos(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const 
 		return;
 	}
 
-    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length*width,
-               cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length*width,
+               cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -1169,7 +1032,7 @@ void is_pos(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const 
 
     is_pos_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
@@ -1198,8 +1061,8 @@ void round_vec(cuComplex *h_in, cuComplex *h_out, const unsigned int length, con
 		return;
 	}
 
-    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length*width,
-               cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length*width,
+               cudaMemcpyHostToDevice));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
@@ -1211,7 +1074,7 @@ void round_vec(cuComplex *h_in, cuComplex *h_out, const unsigned int length, con
 
     round_vec_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
 
-    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost));
     if (cudaGetLastError() != cudaSuccess)
 	{
 		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
@@ -1342,42 +1205,23 @@ void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u,
 
 void fft(cuComplex *h_matrix, cuComplex *h_out, const unsigned int length, const unsigned int width, int direction)
 {   // One dimensional fft along length
-    cuComplex *d_matrix;
+    cuComplex *d_matrix, *d_out;
     cufftHandle plan;
 
-    cudaMalloc((void**)&d_matrix, sizeof(cuComplex)*length*width);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Failed to allocate data\n");
-		return;
-	}
-
-    cudaMemcpy(d_matrix, h_matrix, sizeof(cuComplex)*length*width,
-               cudaMemcpyHostToDevice);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
-		return;
-	}
+    checkCudaErrors(cudaMalloc((void**)&d_matrix, sizeof(cuComplex)*length*width));
+    checkCudaErrors(cudaMalloc((void**)&d_out, sizeof(cuComplex)*length*width));
+    
+    checkCudaErrors(cudaMemcpy(d_matrix, h_matrix, sizeof(cuComplex)*length*width, cudaMemcpyHostToDevice));
 
     cufftPlan1d(&plan, length, CUFFT_C2C, width);
-    cufftExecC2C(plan, d_matrix, d_matrix, direction);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: cufft failed\n");
-		return;
-	}
 
-    cudaMemcpy(h_out, d_matrix, sizeof(cuComplex)*length*width,
-               cudaMemcpyDeviceToHost);
-    if (cudaGetLastError() != cudaSuccess)
-	{
-		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
-		return;
-	}
+    cufftExecC2C(plan, d_matrix, d_out, direction);
+
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(cuComplex)*length*width, cudaMemcpyDeviceToHost));
 
     cufftDestroy(plan);
-    cudaFree(d_matrix);
+    checkCudaErrors(cudaFree(d_out));
+    checkCudaErrors(cudaFree(d_matrix));
     return;
 }
 
@@ -1389,14 +1233,13 @@ void fast_time_block(cuComplex *sRaw, cuComplex *fast_time_filter, const unsigne
 
     sRaw_copy = (cuComplex *)malloc(sizeof(cuComplex)*length*width);
     fast_time_filter_copy = (cuComplex *)malloc(sizeof(cuComplex)*length);
-    
 
     fft(sRaw, sRaw_copy, length, width, CUFFT_FORWARD);
     fftshift(sRaw_copy, sRaw_copy, length, width, 2);
+    //sraw
 
     fftshift(fast_time_filter, fast_time_filter_copy, length, 1, 0);
     mat_vec_mult(sRaw_copy, fast_time_filter_copy, sRaw_copy, length, width);
-
     free(fast_time_filter_copy);
     
     uc = (cuComplex *)malloc(sizeof(cuComplex)*width);
@@ -1416,29 +1259,30 @@ void fast_time_block(cuComplex *sRaw, cuComplex *fast_time_filter, const unsigne
     vec_vec_mult(sRaw_copy, compression, sRaw_copy, length, width);
 
     free(compression);
-
+    
     transpose(sRaw_copy, length, width);
-
+    
     fft(sRaw_copy, sRaw_copy, width, length, CUFFT_FORWARD);
-
+    
     pad(sRaw_copy, fsSpotLit, width, length, width/2, mapWidth - width);
-
+    
     sca_vec_mult(382.0/160.0, fsSpotLit, mapWidth, length);
 
     fft(fsSpotLit, fsSpotLit, mapWidth, length, CUFFT_INVERSE);
     sca_vec_mult(1.0/mapWidth, fsSpotLit, mapWidth, length);
 
     vec_vec_mult(fsSpotLit, decompression, fsSpotLit, mapWidth, length);
-
+    
     free(decompression);
     
     fft(fsSpotLit, fsSpotLit, mapWidth, length, CUFFT_FORWARD);
 
     fftshift(fsSpotLit, fsSpotLit, mapWidth, length, 2);
-
+    
     transpose(fsSpotLit, mapWidth, length);
 
     free(sRaw_copy);
+    return;
 }
 
 void SpatialInterpolate(cuComplex *filteredSignal, float *wn, cuComplex *GridValues,
@@ -1446,15 +1290,13 @@ void SpatialInterpolate(cuComplex *filteredSignal, float *wn, cuComplex *GridVal
                         cuComplex *outSignal, cuComplex *idxout)
 {
     const int nInterpSidelobes = 8;
-    const float pi = 3.1415926;
     
-    cuComplex *row, *sliceRange;
+    cuComplex *row;
     cuComplex *d_filteredSignal, *d_outSignal;
     int *rowidx, *d_rowidx;
 
     float *d_wn, *d_gridvalues;
     row = (cuComplex *)malloc(sizeof(cuComplex)*length*mapWidth);
-    sliceRange = (cuComplex *)malloc(sizeof(cuComplex)*length*mapWidth);
     rowidx = (int *)malloc(sizeof(int)*length*mapWidth);
     
     float2cuComplex(wn, row, length, mapWidth);
@@ -1519,10 +1361,10 @@ int main()
 	float d, i;
     float m = 382;
     float mc = 160;
-    float Xc = 1000.0;
-    float dkx = 0.0785;
-    float kxs = 0.6283;
-    float kxMin = 5.8462;
+    double Xc = 1000.0;
+    double dkx = 0.0785;
+    double kxs = 0.6283;
+    double kxMin = 5.8462;
 
     int nInterpSidelobes = 8;
 
@@ -1596,6 +1438,7 @@ int main()
     sca_vec_mult(4.0, k, width, 1);
     sca_vec_mult(-1.0, ku0, mapLength, 1);
 
+    transpose(sRaw, batch, width);
     fast_time_block(sRaw, signal, width, batch, mapLength, fsSpotLit);
 
     kmat = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*width);
@@ -1654,10 +1497,12 @@ int main()
 
     sca_vec_mult(1.0/width, no_interpolation_image, width, mapLength);
     sca_vec_mult(1.0/mapLength, no_interpolation_image, width, mapLength);
+    
+    //kx_float = (float *)malloc(sizeof(float)*mapLength*width);
+    //cuComplex2float(kx, kx_float, width, mapLength);
+    
+    //finalImage = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*mapWidth);
 
-    kx_float = (float *)malloc(sizeof(float)*mapLength*width);
-    cuComplex2float(kx, kx_float, width, mapLength);
-    finalImage = (cuComplex *)malloc(sizeof(cuComplex)*mapLength*mapWidth);
     // Spatial Interpolate
     //SpatialInterpolate(filteredSignal, kx_float, (kxMin + ( (-nInterpSidelobes-2):(nx-nInterpSidelobes-3) ) * dkx), dkx, kxs, width, mapWidth, mapLength, finalImage, idxout);
     //-10 to 255 start end size
@@ -1685,10 +1530,10 @@ int main()
     free(ku0mat);
     free(signal);
     free(kx_work);
-    free(kx_float);
+    //free(kx_float);
     free(fsSpotLit);
     free(out_signal);
-    free(finalImage);
+    //free(finalImage);
     free(padded_data);    
     free(no_interpolation_image);
 	return 0;
