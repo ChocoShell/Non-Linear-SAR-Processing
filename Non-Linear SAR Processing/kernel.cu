@@ -56,6 +56,8 @@ using namespace std;
 
 #define BLOCK_SIZE 32
 
+#define PI 3.14159265358979323846
+
 void split_line(string& line, string delim, list<string>& values)
 {
     size_t pos = 0;
@@ -369,8 +371,29 @@ __global__ void round_vec_kernel(cuComplex *d_in, cuComplex *d_out, const unsign
 
     return;
 }
-__global__ void spatial_interpolate_kernel()
+__global__ void spatial_inter_kernel(cuComplex *filteredSignal, float *kx, float *GridValues, int *rowidx, const unsigned int length, const unsigned int width, const int nInterpSideLobes, float dkx, float kxs, cuComplex *out)
 {
+    unsigned int col = blockDim.x * blockIdx.x + threadIdx.x;
+    unsigned int row = blockDim.y * blockIdx.y + threadIdx.y;
+    unsigned int stack = blockDim.z * blockIdx.z + threadIdx.z;
+    
+    if (row >= width || col >= length || stack >= (2*nInterpSideLobes -1)) {return;}
+
+    int ind = length*row + col;
+
+    int idxout = rowidx[ind] + stack;
+    //GridValues = real float array
+    // rowidx = real int array
+    // kx = real float array
+    float sliceRange = GridValues[idxout] - kx[ind];
+    float snc;
+    if (sliceRange/dkx > 0.0000001f)
+        snc = 1;
+    else
+        snc = sin(PI*sliceRange/dkx)/(PI*sliceRange/dkx);
+    
+    out[idxout].x = out[idxout].x + filteredSignal[ind].x*snc*(0.54 + 0.46*cos( sliceRange * PI/kxs ));
+    out[idxout].y = out[idxout].y + filteredSignal[ind].y*snc*(0.54 + 0.46*cos( sliceRange * PI/kxs ));
 
     return;
 }
