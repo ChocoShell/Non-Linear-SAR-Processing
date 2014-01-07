@@ -355,6 +355,25 @@ __global__ void is_pos_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned 
     else
         d_out[ind] = make_cuComplex(0.0, 0.0);
 }
+__global__ void round_vec_kernel(cuComplex *d_in, cuComplex *d_out, const unsigned int length, const unsigned int width)
+{
+    //d_in is real
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+ 
+    if (row >= width || col >= length) {return;}
+
+    int ind = length*row + col;
+
+    d_out[ind] = make_cuComplex(roundf(d_in[ind].x), 0.0);
+
+    return;
+}
+__global__ void spatial_interpolate_kernel()
+{
+
+    return;
+}
 
 // kernel helpers
 void square(cuComplex *h_vector, cuComplex *h_out, const unsigned int length, const unsigned int width)
@@ -1098,6 +1117,49 @@ void is_pos(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const 
     cudaFree(d_in);
     return;
 }
+void round_vec(cuComplex *h_in, cuComplex *h_out, const unsigned int length, const unsigned int width)
+{
+    cuComplex *d_in, *d_out;
+
+    cudaMalloc((void**)&d_in, sizeof(cuComplex)*length*width);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMalloc((void**)&d_out, sizeof(cuComplex)*width*length);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Failed to allocate memory for matrix\n");
+		return;
+	}
+
+    cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length*width,
+               cudaMemcpyHostToDevice);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy to device failed\n");
+		return;
+	}
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(length/threadsPerBlock.x + 1, width/threadsPerBlock.y + 1);
+
+    round_vec_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
+
+    cudaMemcpy(h_out, d_out, sizeof(cuComplex)*width*length, cudaMemcpyDeviceToHost);
+    if (cudaGetLastError() != cudaSuccess)
+	{
+		fprintf(stderr, "Cuda error: Memcpy from device failed\n");
+		return;
+	}
+
+    cudaFree(d_out);
+    cudaFree(d_in);
+    return;
+
+}
 
 // Produces Compression Constants
 void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u, const int u_len, cuComplex *k, const int width, cuComplex *compression, cuComplex *decompression)
@@ -1248,9 +1310,74 @@ void fast_time_block(cuComplex *sRaw, cuComplex *fast_time_filter, const unsigne
     free(sRaw_copy);
 }
 
-void SpatialInterpolate(cuComplex *filteredSignal, cuComplex *kx, cuComplex *GridValues, float dkx, float kxs, cuComplex *outSignal, cuComplex *idxout)
+void SpatialInterpolate(cuComplex *filteredSignal, cuComplex *wn, cuComplex *GridValues,
+                        float dkx, float kxs, const int length, const int mapWidth, const int mapLength, 
+                        cuComplex *outSignal, cuComplex *idxout)
 {
+    const int nInterpSidelobes = 8;
+    const float pi = 3.1415926;
+    int offset [15] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 
+    int p = 15;
+    int ind;
+    cuComplex *rowidx, *sliceRange;
+
+    rowidx = (cuComplex *)malloc(sizeof(cuComplex)*length*mapWidth);
+    sliceRange = (cuComplex *)malloc(sizeof(cuComplex)*length*mapWidth);
+
+    memcpy(rowidx, wn, sizeof(cuComplex)*length*mapWidth);
+
+    float negGridValue = cuCabsf(cuCmulf(make_cuComplex(-1.0,0.0), GridValues[0]));
+
+    sca_vec_add(negGridValue, rowidx, length, mapWidth, 1.0);
+
+    sca_vec_mult(1.0/dkx, rowidx, length, mapWidth);
+
+    round_vec(rowidx, rowidx, length, mapWidth);
+
+    sca_vec_add(-1.0*nInterpSidelobes, rowidx, length, mapWidth, 1.0);
+    //rowidx is complete at this line
+
+
+    // Rewrite given x,y,z coordinates
+    for(int iz = 0; iz < 15; iz++)
+    {
+        // rowidx + iz;
+        
+        /*
+        for(int ix = 0; ix < length; ix++)
+        {
+            for(int iy = 0; iy < mapWidth; iy++)
+            {
+                // ind = col*mapWidth + row
+                ind = ix*mapWidth + iy;
+                // idxout[ind].x = rowidx[ind] + iz
+                sliceRange[ind].x = GridValues[(int)idxout[ind].x].x - wn[ind].x;
+                sliceRange[ind].y = 0.0;
+            }
+        }
+        */
+        // Interpolating windows from the slice values
+        //snc = sinc(sliceRange/dkx);
+        //ham = 0.54 + 0.46*cos( sliceRange * (pi/dks))
+
+        for(int ix = 0; ix < length; ix++)
+        {
+            for(int iy = 0; iy < mapWidth; iy++)
+            {
+                idxout = rowidx + offset[iz];
+                
+                // ind = col*mapWidth + row
+                ind = ix*mapWidth + iy;
+                //idxout[ind] = rowidx[ind] + offset[iz];
+                //snc[ind] = sinc((GridValues[(int)idxout[ind].x].x - wn[ind].x)/dkx);
+                //snc[ind] = sinc(sliceRange[ind]/dkx);
+                //ham[ind] = (0.54 + 0.46*cos( sliceRange[ind] * pi/dks ))
+                //ham[ind] = 0.54 + 0.46*cos( (GridValues[(int)idxout[ind].x].x - wn[ind].x) * pi/dks )
+                outSignal[(int)idxout[ind].x] = outSignal[idxout[ind]] + filteredSignal[ind]*sinc((GridValues[(int)idxout[ind].x].x - wn[ind].x)/dkx)*(0.54 + 0.46*cos( sliceRange[ind].x * pi/mapWidth ));
+            }
+        }
+    }
 }
 
 int main()
@@ -1392,8 +1519,13 @@ int main()
     sca_vec_mult(1.0/width, kx, width, mapLength);
     sca_vec_mult(1.0/mapLength, kx, width, mapLength);
 
-    // 1. create function to copy vector into a matrix
+    
     // Spatial Interpolate
+    //-10 to 255 start end size
+    // sca vec mult dkx
+    // sca vec add kxMin
+    // transpose?
+    // = GridValues
 
     for(int x = 0; x < mapLength; x++)
     {
