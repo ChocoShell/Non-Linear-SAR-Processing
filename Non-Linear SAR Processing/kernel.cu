@@ -49,6 +49,7 @@ New Not Dumb Plan
 #include <math_functions.h>
 
 #include <vector_types.h>
+#include "utils.h"
 
 #include <array>
 
@@ -371,29 +372,30 @@ __global__ void round_vec_kernel(cuComplex *d_in, cuComplex *d_out, const unsign
 
     return;
 }
-__global__ void spatial_inter_kernel(cuComplex *filteredSignal, float *kx, float *GridValues, int *rowidx, const unsigned int length, const unsigned int width, const int nInterpSideLobes, float dkx, float kxs, cuComplex *out)
+__global__ void spatial_inter_kernel(cuComplex *filteredSignal, float *kx, float *GridValues, int *rowidx, const unsigned int length, const unsigned int width, const unsigned int mapLength, const unsigned int mapWidth, const int nInterpSideLobes, const float dkx, const float kxs, cuComplex *out)
 {
     unsigned int col = blockDim.x * blockIdx.x + threadIdx.x;
     unsigned int row = blockDim.y * blockIdx.y + threadIdx.y;
     unsigned int stack = blockDim.z * blockIdx.z + threadIdx.z;
     
-    if (row >= width || col >= length || stack >= (2*nInterpSideLobes -1)) {return;}
+    if (row >= mapWidth || col >= length || stack >= (2*nInterpSideLobes -1)) {return;}
+    
+    float snc, multiplier;
 
     int ind = length*row + col;
-
     int idxout = rowidx[ind] + stack;
-    //GridValues = real float array
-    // rowidx = real int array
-    // kx = real float array
     float sliceRange = GridValues[idxout] - kx[ind];
-    float snc;
-    if (sliceRange/dkx > 0.0000001f)
+    
+    if (sliceRange/dkx == 0.0f)
         snc = 1;
     else
         snc = sin(PI*sliceRange/dkx)/(PI*sliceRange/dkx);
     
-    out[idxout].x = out[idxout].x + filteredSignal[ind].x*snc*(0.54 + 0.46*cos( sliceRange * PI/kxs ));
-    out[idxout].y = out[idxout].y + filteredSignal[ind].y*snc*(0.54 + 0.46*cos( sliceRange * PI/kxs ));
+    multiplier = snc*(0.54 + 0.46*cos( sliceRange * PI/kxs ));
+
+    int image_ind = idxout + mapLength*row;
+    out[image_ind].x = out[image_ind].x + filteredSignal[ind].x*multiplier;
+    out[image_ind].y = out[image_ind].y + filteredSignal[ind].y*multiplier;
 
     return;
 }
@@ -1181,7 +1183,28 @@ void round_vec(cuComplex *h_in, cuComplex *h_out, const unsigned int length, con
     cudaFree(d_out);
     cudaFree(d_in);
     return;
+}
+void cuComplex2Int(cuComplex *h_in, int *h_out, const unsigned int length, const unsigned int width)
+{
+    cuComplex *d_in;
+    int *d_out;
 
+    checkCudaErrors(cudaMalloc((void**)&d_in, sizeof(cuComplex)*length*width));
+    
+    checkCudaErrors(cudaMalloc((void**)&d_out, sizeof(int)*length*width));
+    
+    checkCudaErrors(cudaMemcpy(d_in, h_in, sizeof(cuComplex)*length*width, cudaMemcpyHostToDevice));
+
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(length/threadsPerBlock.x + 1, width/threadsPerBlock.y + 1);
+
+    cuComplex2Int_kernel<<<numOfBlocks, threadsPerBlock>>>(d_in, d_out, length, width);
+
+    checkCudaErrors(cudaMemcpy(h_out, d_out, sizeof(int)*length*width, cudaMemcpyDeviceToHost));
+    
+    cudaFree(d_out);
+    cudaFree(d_in);
+    return;
 }
 
 // Produces Compression Constants
@@ -1333,74 +1356,51 @@ void fast_time_block(cuComplex *sRaw, cuComplex *fast_time_filter, const unsigne
     free(sRaw_copy);
 }
 
-void SpatialInterpolate(cuComplex *filteredSignal, cuComplex *wn, cuComplex *GridValues,
+void SpatialInterpolate(cuComplex *filteredSignal, float *wn, cuComplex *GridValues,
                         float dkx, float kxs, const int length, const int mapWidth, const int mapLength, 
                         cuComplex *outSignal, cuComplex *idxout)
 {
     const int nInterpSidelobes = 8;
     const float pi = 3.1415926;
-    int offset [15] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    
+    cuComplex *row, *sliceRange;
+    cuComplex *d_filteredSignal, *d_wn, *d_gridvalues, *d_rowidx, *d_outSignal;
+    int *rowidx;
 
-    int p = 15;
-    int ind;
-    cuComplex *rowidx, *sliceRange;
-
-    rowidx = (cuComplex *)malloc(sizeof(cuComplex)*length*mapWidth);
+    row = (cuComplex *)malloc(sizeof(cuComplex)*length*mapWidth);
     sliceRange = (cuComplex *)malloc(sizeof(cuComplex)*length*mapWidth);
-
-    memcpy(rowidx, wn, sizeof(cuComplex)*length*mapWidth);
+    rowidx = (int *)malloc(sizeof(int)*length*mapWidth);
+    memcpy(row, wn, sizeof(cuComplex)*length*mapWidth);
 
     float negGridValue = cuCabsf(cuCmulf(make_cuComplex(-1.0,0.0), GridValues[0]));
 
-    sca_vec_add(negGridValue, rowidx, length, mapWidth, 1.0);
+    sca_vec_add(negGridValue, row, length, mapWidth, 1.0);
 
-    sca_vec_mult(1.0/dkx, rowidx, length, mapWidth);
+    sca_vec_mult(1.0/dkx, row, length, mapWidth);
 
-    round_vec(rowidx, rowidx, length, mapWidth);
+    round_vec(row, row, length, mapWidth);
 
-    sca_vec_add(-1.0*nInterpSidelobes, rowidx, length, mapWidth, 1.0);
+    sca_vec_add(-1.0*nInterpSidelobes, row, length, mapWidth, 1.0);
+
+    cuComplex2Int(row, rowidx, length, mapWidth);
     //rowidx is complete at this line
 
+    //Setting up Cuda memory
+    
+    checkCudaErrors(cudaMalloc((void**)&d_wn, sizeof(float)*length*mapWidth));
+    checkCudaErrors(cudaMalloc((void**)&d_gridvalues, sizeof(float)*mapLength));
+    checkCudaErrors(cudaMalloc((void**)&d_rowidx, sizeof(int)*length*mapWidth));
+    checkCudaErrors(cudaMalloc((void**)&d_outSignal, sizeof(cuComplex)*mapLength*mapWidth));
+    checkCudaErrors(cudaMalloc((void**)&d_filteredSignal, sizeof(cuComplex)*length*mapWidth));
 
-    // Rewrite given x,y,z coordinates
-    for(int iz = 0; iz < 15; iz++)
-    {
-        // rowidx + iz;
-        
-        /*
-        for(int ix = 0; ix < length; ix++)
-        {
-            for(int iy = 0; iy < mapWidth; iy++)
-            {
-                // ind = col*mapWidth + row
-                ind = ix*mapWidth + iy;
-                // idxout[ind].x = rowidx[ind] + iz
-                sliceRange[ind].x = GridValues[(int)idxout[ind].x].x - wn[ind].x;
-                sliceRange[ind].y = 0.0;
-            }
-        }
-        */
-        // Interpolating windows from the slice values
-        //snc = sinc(sliceRange/dkx);
-        //ham = 0.54 + 0.46*cos( sliceRange * (pi/dks))
+    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+    dim3 numOfBlocks(length/threadsPerBlock.x + 1, mapWidth/threadsPerBlock.y + 1, (2*nInterpSidelobes - 1)/threadsPerBlock.z + 1);
+    //->
+    spatial_inter_kernel<<<numOfBlocks, threadsPerBlock>>>(filteredSignal, wn, GridValues, rowidx, length, width, mapLength, mapWidth, nInterpSidelobes, dkx, kxs, outSignal);
+    cudaDeviceSynchronize(); checkCudaErrors(cudaGetLastError());
 
-        for(int ix = 0; ix < length; ix++)
-        {
-            for(int iy = 0; iy < mapWidth; iy++)
-            {
-                idxout = rowidx + offset[iz];
-                
-                // ind = col*mapWidth + row
-                ind = ix*mapWidth + iy;
-                //idxout[ind] = rowidx[ind] + offset[iz];
-                //snc[ind] = sinc((GridValues[(int)idxout[ind].x].x - wn[ind].x)/dkx);
-                //snc[ind] = sinc(sliceRange[ind]/dkx);
-                //ham[ind] = (0.54 + 0.46*cos( sliceRange[ind] * pi/dks ))
-                //ham[ind] = 0.54 + 0.46*cos( (GridValues[(int)idxout[ind].x].x - wn[ind].x) * pi/dks )
-                outSignal[(int)idxout[ind].x] = outSignal[idxout[ind]] + filteredSignal[ind]*sinc((GridValues[(int)idxout[ind].x].x - wn[ind].x)/dkx)*(0.54 + 0.46*cos( sliceRange[ind].x * pi/mapWidth ));
-            }
-        }
-    }
+    free(rowidx);
+    return;
 }
 
 int main()
