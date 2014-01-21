@@ -7,14 +7,11 @@ Programming the algorithms in Non-Linear SAR Processing paper
 7. Section 3.5 mx, my = xi, yi = location of reflector
 
 New Not Dumb Plan
-
-
 */
 // includes, system
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-
 #include <iostream>
 #include <fstream>
 #include <cstdlib>
@@ -1221,6 +1218,23 @@ void print_mat(cuComplex *mat, const int xVal, const int yVal)
 
 }
 
+void print_mat_file(char* filename, cuComplex *mat, const int xVal, const int yVal)
+{
+    cuComplex curr;
+    FILE * myFile;
+    myFile = fopen (filename, "w");
+    for(int x = 0; x < xVal; x++)
+    {
+        for(int y = 0; y < yVal; y++)
+        {
+            curr = mat[x*yVal + y];
+            fprintf(myFile, "%g + (%gi), ", cuCrealf(curr), cuCimagf(curr));
+        }
+        fprintf(myFile, "\n");
+    }
+    fclose (myFile);
+}
+
 // Produces Compression Constants
 void comp_decomp(const float Xc, cuComplex *uc, const int length,  cuComplex *u, const int u_len, cuComplex *k, const int width, cuComplex *compression, cuComplex *decompression)
 {
@@ -1651,7 +1665,7 @@ int main()
     // Spatial Interpolate
     idxout = (cuComplex *)malloc(sizeof(cuComplex)*width*mapLength);
 
-    SpatialInterpolate(sig, kx_float, gridValues, dkx, kxs, width, mapLength, mapWidth, finalImage, idxout);
+    SpatialInterpolate(filteredSignal, kx_float, gridValues, dkx, kxs, width, mapLength, mapWidth, finalImage, idxout);
     // = GridValues
     
     fft(finalImage, finalImage, mapWidth, mapLength, CUFFT_INVERSE);
@@ -1662,7 +1676,8 @@ int main()
     sca_vec_mult(1.0/mapLength, finalImage, mapWidth, mapLength);
     sca_vec_mult(1.0/mapWidth, finalImage, mapWidth, mapLength);
 
-    print_mat(finalImage, mapLength, mapWidth);
+    //print_mat(finalImage, mapLength, mapWidth);
+    print_mat_file("outMat.txt", finalImage, mapLength, mapWidth);
 
     free(sig);
     free(u);
