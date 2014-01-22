@@ -8,7 +8,6 @@
 *.mat
 *.vcxproj
 *.sln
-*.txt
 *.csv
 
 # Build results
